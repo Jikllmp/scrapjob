@@ -1,4 +1,4 @@
-import type { AdapterRegistry } from '@scrapjob/core';
+import type { AdapterRegistry, Taxonomy } from '@scrapjob/core';
 import type { Config } from './config';
 import type { Db } from './db/client';
 import type { EventBus } from './events/bus';
@@ -12,5 +12,7 @@ export interface AppContext {
   events: EventStore;
   registry: AdapterRegistry;
   runner: SearchRunner;
+  taxonomy: Taxonomy;
+  exportDir: string;
   version: string;
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `evidence` ADD `source_kind` text DEFAULT 'page' NOT NULL;

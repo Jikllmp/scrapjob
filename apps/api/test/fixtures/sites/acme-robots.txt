@@ -1,0 +1,3 @@
+# fixture: synthetic robots.txt for https://www.acme-software.test/robots.txt, written 2026-10-08
+User-agent: *
+Disallow: /admin/

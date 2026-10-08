@@ -1,0 +1,4 @@
+{
+  "_fixture": "Synthetic Brave Search API response with no results, written 2026-10-08, used for every query without its own fixture",
+  "web": { "results": [] }
+}
