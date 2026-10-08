@@ -1,0 +1,83 @@
+# Job boards, social networks and directories: never an employer's own site,
+# and only a weak (LOW) source on their own. Matching is on the registrable domain.
+aggregators:
+  - linkedin.com
+  - indeed.com
+  - indeed.be
+  - jobat.be
+  - stepstone.be
+  - ictjob.be
+  - monster.be
+  - glassdoor.com
+  - glassdoor.be
+  - references.be
+  - leforem.be
+  - vdab.be
+  - actiris.brussels
+  - jobsinbrussels.com
+  - talent.com
+  - jooble.org
+  - optioncarriere.be
+  - careerjet.be
+  - facebook.com
+  - instagram.com
+  - x.com
+  - twitter.com
+  - youtube.com
+  - wikipedia.org
+  - pagesdor.be
+  - goudengids.be
+  - kompass.com
+  - companyweb.be
+  - welcometothejungle.com
+  - google.com
+  - meetup.com
+
+# Press: never an employer's own site, but a reputable single source (MEDIUM).
+media:
+  - trends.be
+  - lesoir.be
+  - lavenir.net
+  - rtbf.be
+  - sudinfo.be
+  - dhnet.be
+  - lecho.be
+  - tijd.be
+  - datanews.be
+
+# Applicant tracking systems. A careers page hosted here is published by the
+# employer itself (docs/ANALYSIS.md, A7).
+ats:
+  - recruitee.com
+  - teamtailor.com
+  - workable.com
+  - lever.co
+  - greenhouse.io
+  - smartrecruiters.com
+  - personio.de
+  - personio.com
+  - join.com
+  - breezy.hr
+  - homerun.co
+  - jobtoolz.com
+  - bamboohr.com
+
+# Staffing agencies and recruitment firms: kept, flagged `is_agency`.
+agencies:
+  - randstad.be
+  - adecco.be
+  - manpower.be
+  - startpeople.be
+  - unique.be
+  - tempo-team.be
+  - hays.be
+  - michaelpage.be
+  - robertwalters.be
+  - roberthalf.be
+  - proselect.be
+  - accent.jobs
+  - synergiejobs.be
+  - daoust.be
+  - t-interim.be
+  - agilitas.be
+  - itzu.be
