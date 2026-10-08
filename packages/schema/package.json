@@ -1,0 +1,20 @@
+{
+  "name": "@scrapjob/schema",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./enums": "./src/enums.ts",
+    "./candidates": "./src/candidates.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "drizzle-zod": "^0.8.3",
+    "zod": "^4.1.0"
+  }
+}

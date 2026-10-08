@@ -1,7 +1,7 @@
 # Phase 0 — Analysis
 
 Spec: *Professional Contact Finder — Master Prompt v2* (Oct 8, 2026).
-Status: analysis only. No application code has been written. Waiting for your answer before Phase 1.
+Status: answered on 2026-10-08. Leads count toward the target, Brave only, docs in English, code in `Jikllmp/scrapjob`. See `docs/ADR/0002-product-decisions.md`.
 
 Claims marked **(verify)** are from my knowledge of third-party services and may have changed; I will check each one against the live documentation before the code depends on it.
 
