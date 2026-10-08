@@ -1,0 +1,20 @@
+{
+  "name": "scrapjob",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"pnpm --filter @scrapjob/api dev\" \"pnpm --filter @scrapjob/web dev\"",
+    "test": "vitest run",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @scrapjob/api db:generate"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "~6.0.3",
+    "vitest": "^4.0.0"
+  }
+}
