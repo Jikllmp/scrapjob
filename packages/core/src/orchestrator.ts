@@ -1,9 +1,19 @@
-import { CompanyCandidate } from '@scrapjob/schema/candidates';
+import { CompanyCandidate, type Company } from '@scrapjob/schema';
 import type { BudgetSpent } from '@scrapjob/schema/api';
 import { Budget, type BudgetLimits, type BudgetStopReason } from './budget';
 import { normaliseSourceError, type SourceError } from './adapters/errors';
 import { SourceHealth } from './adapters/registry';
 import { isDiscoveryCapable, type EventSink, type SearchContext, type SourceAdapter } from './adapters/types';
+import { contactConfidence, identityConfidence, isStale, type ConfidenceContext } from './contacts/confidence';
+import { dedupDecision, mergeDrafts } from './contacts/dedup';
+import { isLead, type ContactDraft } from './contacts/fields';
+import { scoreContact, type LocationMatch } from './contacts/scoring';
+import { valueInSnippet } from './extraction/snippet';
+import { planQueries, type QueryPlan } from './planning/queries';
+import { buildDraft } from './pipeline/candidates';
+import type { PipelineStore, ScoredDraft } from './pipeline/store';
+import type { Taxonomy } from './taxonomy';
+import { containsPhrase, normaliseName } from './text/normalise';
 
 export interface SearchRequest {
   searchId: string;
@@ -15,7 +25,10 @@ export interface SearchRequest {
 export interface OrchestratorOptions {
   adapters: readonly SourceAdapter[];
   events: EventSink;
+  store: PipelineStore;
+  taxonomy: Taxonomy;
   limits: BudgetLimits;
+  minRelevanceScore: number;
   sourceFailureThreshold: number;
   signal: AbortSignal;
   now?: () => number;
@@ -34,6 +47,7 @@ export interface SearchOutcome {
   stopReason: StopReason;
   message: string;
   validatedContacts: number;
+  leads: number;
   companies: number;
   budgetSpent: BudgetSpent;
 }
@@ -45,32 +59,62 @@ const stopReasonText: Record<StopReason, string> = {
   search_api_budget_exhausted: 'search API budget exhausted',
   sources_exhausted: 'sources exhausted',
   all_sources_failed: 'every source failed',
-  no_source_available: 'no discovery-capable source is available',
+  no_source_available: 'no company discovery source is available',
   cancelled: 'cancelled by the user',
 };
 
+/** Stop asking a company for more people once it has yielded this many. */
+const PEOPLE_PER_COMPANY = 3;
+
+interface CompanyState {
+  company: Company;
+  hasPosting: boolean;
+  validated: number;
+}
+
+interface TrackedContact {
+  draft: ContactDraft;
+  lead: boolean;
+}
+
 /**
- * Runs one search. Phase 1 runs company discovery only; later phases add the
- * job, people, extraction, dedup and scoring stages to the same loop.
+ * Runs one search: plan queries, discover companies (with their open
+ * postings), then for each company identify people, build evidenced drafts,
+ * dedup, score and persist, until the target or a budget is reached.
  */
 export async function runSearch(request: SearchRequest, options: OrchestratorOptions): Promise<SearchOutcome> {
-  const { events, signal } = options;
-  const budget = new Budget(options.limits, options.now);
+  const { events, signal, store, taxonomy } = options;
+  const now = options.now ?? Date.now;
+  const budget = new Budget(options.limits, now);
   const health = new SourceHealth(options.sourceFailureThreshold);
-  const ctx: SearchContext = { ...request, signal, budget, events };
-  let companies = 0;
-  const validatedContacts = 0;
-
-  const finish = (status: SearchOutcome['status'], stopReason: StopReason): SearchOutcome => {
-    const message = `${validatedContacts} / ${request.targetCount} contacts — stopped: ${stopReasonText[stopReason]}`;
-    return { status, stopReason, message, validatedContacts, companies, budgetSpent: budget.spent() };
-  };
+  const confCtx = (): ConfidenceContext => ({ taxonomy, now: new Date(now()) });
+  const contacts: TrackedContact[] = [];
+  const companies = new Map<string, CompanyState>();
+  let validated = 0;
+  const warned = new Set<string>();
 
   const stopCheck = (): StopReason | null => {
     if (signal.aborted) return 'cancelled';
-    if (validatedContacts >= request.targetCount) return 'target_reached';
+    if (validated >= request.targetCount) return 'target_reached';
     return budget.exhausted();
   };
+
+  const leads = () => contacts.filter((c) => c.lead).length;
+  const finish = (status: SearchOutcome['status'], stopReason: StopReason): SearchOutcome => {
+    const confirmed = validated - leads();
+    const detail = validated > 0 ? ` (${confirmed} confirmed, ${leads()} unconfirmed leads)` : '';
+    const message = `${validated} / ${request.targetCount} contacts${detail} — stopped: ${stopReasonText[stopReason]}`;
+    return {
+      status,
+      stopReason,
+      message,
+      validatedContacts: validated,
+      leads: leads(),
+      companies: companies.size,
+      budgetSpent: budget.spent(),
+    };
+  };
+  const finishStopped = (reason: StopReason) => finish(reason === 'cancelled' ? 'cancelled' : 'completed', reason);
 
   const recordFailure = (error: SourceError): void => {
     events.emit('WARNING', 'warn', `${error.adapter}: ${error.kind}: ${error.message}`, { error });
@@ -79,6 +123,21 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
         adapter: error.adapter,
         failures: health.failureCount(error.adapter),
       });
+    }
+  };
+
+  const budgetWarnings = () => {
+    const spent = budget.spent();
+    const checks: [string, number, number][] = [
+      ['requests', spent.httpRequests, options.limits.maxHttpRequests],
+      ['search API calls', spent.searchApiCalls, options.limits.maxSearchApiCalls],
+      ['time', spent.elapsedMs, options.limits.maxDurationMs],
+    ];
+    for (const [name, used, limit] of checks) {
+      if (!warned.has(name) && used >= limit * 0.8) {
+        warned.add(name);
+        events.emit('BUDGET_WARNING', 'warn', `80% of the ${name} budget used`, { budget: name, used, limit });
+      }
     }
   };
 
@@ -104,22 +163,156 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
       });
     } else {
       health.disable(adapter.id);
-      events.emit('SOURCE_DISABLED', 'warn', `${adapter.displayName} is not available`, { adapter: adapter.id });
+      const why = adapter.unavailableReason?.() ?? 'not available';
+      events.emit('SOURCE_DISABLED', 'warn', `${adapter.displayName}: ${why}`, { adapter: adapter.id });
     }
   }
 
   const discovery = live.filter(isDiscoveryCapable);
-  const failedRuns = new Set<string>();
-  if (discovery.length === 0) return finish('failed', 'no_source_available');
+  const companySources = discovery.filter((a) => a.capabilities.has('companies'));
+  const peopleSources = discovery.filter((a) => a.capabilities.has('people'));
+  if (companySources.length === 0) return finish('failed', 'no_source_available');
 
-  for (const adapter of discovery.filter((a) => a.capabilities.has('companies'))) {
+  const plan: QueryPlan = planQueries(request.location, request.position, taxonomy);
+  for (const q of plan.seeds) {
+    events.emit('QUERY_PLANNED', 'debug', q.text, { queryId: q.id, intent: q.intent, lang: q.lang });
+  }
+  const ctx: SearchContext = {
+    ...request,
+    signal,
+    budget,
+    events,
+    plan,
+    taxonomy,
+    shouldStop: () => stopCheck() !== null,
+  };
+
+  const locationOf = (draft: ContactDraft, company: Company): LocationMatch => {
+    const city = draft.fields.city ?? company.city;
+    if (city && plan.location.areaNames.some((n) => containsPhrase(city, n))) return 'area';
+    const country = draft.fields.country ?? company.country;
+    if (city || country) {
+      if (country && plan.location.countryCode && containsPhrase(country, plan.location.countryCode)) return 'country';
+      if (country && plan.location.countryName && containsPhrase(country, plan.location.countryName)) return 'country';
+      return 'elsewhere';
+    }
+    return 'unknown';
+  };
+
+  const score = (draft: ContactDraft, state: CompanyState): ScoredDraft => {
+    const confidence = contactConfidence(draft, confCtx());
+    const identity = draft.evidence.filter((e) => e.field === 'full_name' || e.field === 'title');
+    const result = scoreContact({
+      roleTier: draft.roleTier,
+      roleArchetype: draft.roleArchetype,
+      roleGenericOnly: draft.roleGenericOnly,
+      hasOpenPosting: state.hasPosting,
+      sectorMatch: null,
+      location: locationOf(draft, state.company),
+      locationName: plan.location.place?.name ?? plan.location.input,
+      confidence,
+      hasChannel: draft.fields.email !== undefined || draft.fields.profile_url !== undefined,
+      stale: identity.length > 0 && identity.every((e) => isStale(e, new Date(now()))),
+    });
+    return { draft, score: result, confidence };
+  };
+
+  const handleCandidate = (raw: unknown, adapter: SourceAdapter, state: CompanyState): void => {
+    const built = buildDraft(raw, adapter.id, state.company, taxonomy, events);
+    if (!built.ok) {
+      events.emit('CONTACT_REJECTED', 'debug', `${adapter.id}: ${built.reason}`, {
+        adapter: adapter.id,
+        company: state.company.name,
+        reasons: [built.reason],
+      });
+      return;
+    }
+    const draft = built.draft;
+    const name = draft.fields.full_name!;
+    if (store.isBlocked(normaliseName(name), state.company.domain)) {
+      events.emit('CONTACT_REJECTED', 'info', `${name} is on the erasure blocklist`, { reasons: ['blocklisted'] });
+      return;
+    }
+    events.emit('CONTACT_CANDIDATE_FOUND', 'debug', `${name} — ${draft.fields.title ?? 'job posting contact'}`, {
+      adapter: adapter.id,
+      company: state.company.name,
+    });
+
+    const decision = dedupDecision(
+      draft,
+      contacts.map((c) => c.draft),
+    );
+    if (decision.kind === 'merge') {
+      const tracked = contacts.find((c) => c.draft === decision.with)!;
+      const merged = mergeDrafts(decision.with, draft, confCtx());
+      const scored = score(merged, companies.get(merged.company?.id ?? '') ?? state);
+      store.updateContact(merged.id!, scored);
+      tracked.draft = merged;
+      tracked.lead = isLead(identityConfidence(merged, confCtx()));
+      const urls = [...new Set([...decision.with.evidence, ...draft.evidence].map((e) => e.sourceUrl))];
+      events.emit('DUPLICATE_MERGED', 'info', `${name}: merged two sightings (${decision.reason})`, {
+        contactId: merged.id,
+        sourceUrls: urls,
+        score: scored.score.score,
+        confidence: scored.confidence,
+      });
+      return;
+    }
+
+    const scored = score(draft, state);
+    if (scored.score.score < options.minRelevanceScore) {
+      events.emit('CONTACT_REJECTED', 'info', `${name} scored ${scored.score.score}, below ${options.minRelevanceScore}`, {
+        company: state.company.name,
+        score: scored.score.score,
+        reasons: scored.score.reasons,
+      });
+      return;
+    }
+    const id = store.insertContact(request.searchId, scored);
+    draft.id = id;
+    const lead = isLead(identityConfidence(draft, confCtx()));
+    contacts.push({ draft, lead });
+    validated += 1;
+    state.validated += 1;
+    events.emit(
+      'CONTACT_VALIDATED',
+      'info',
+      `${name} — ${draft.fields.title ?? 'job posting contact'}, ${state.company.name} (score ${scored.score.score}, ${scored.confidence}${lead ? ', unconfirmed lead' : ''})`,
+      { contactId: id, score: scored.score.score, confidence: scored.confidence, lead, adapter: adapter.id },
+    );
+    if (decision.kind === 'flag') {
+      store.flagPossibleDuplicate(id, decision.with.id!);
+      events.emit('POSSIBLE_DUPLICATE', 'info', `${name} may be the same person as an earlier contact`, {
+        contactId: id,
+        otherId: decision.with.id,
+        score: decision.score,
+      });
+    }
+  };
+
+  const identifyPeople = async (state: CompanyState): Promise<void> => {
+    for (const adapter of peopleSources) {
+      if (state.validated >= PEOPLE_PER_COMPANY - 1 || health.isDisabled(adapter.id) || stopCheck()) return;
+      try {
+        for await (const raw of adapter.discoverPeople(ctx, state.company)) {
+          handleCandidate(raw, adapter, state);
+          if (stopCheck() || state.validated >= PEOPLE_PER_COMPANY) break;
+        }
+      } catch (thrown) {
+        recordFailure(normaliseSourceError(adapter.id, thrown));
+      }
+    }
+  };
+
+  const failedRuns = new Set<string>();
+  for (const adapter of companySources) {
     const early = stopCheck();
-    if (early) return finish(early === 'cancelled' ? 'cancelled' : 'completed', early);
+    if (early) return finishStopped(early);
     if (health.isDisabled(adapter.id)) continue;
     try {
       for await (const raw of adapter.discoverCompanies(ctx)) {
         const stop = stopCheck();
-        if (stop) return finish(stop === 'cancelled' ? 'cancelled' : 'completed', stop);
+        if (stop) return finishStopped(stop);
         const parsed = CompanyCandidate.safeParse(raw);
         if (!parsed.success) {
           events.emit('EXTRACTION_REJECTED', 'warn', `${adapter.id} returned an invalid company candidate`, {
@@ -128,11 +321,47 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
           });
           continue;
         }
-        companies += 1;
-        events.emit('COMPANY_DISCOVERED', 'info', parsed.data.name, {
-          adapter: adapter.id,
-          sourceUrl: parsed.data.evidence[0]?.sourceUrl,
-        });
+        const candidate = {
+          ...parsed.data,
+          evidence: parsed.data.evidence.filter((e) => valueInSnippet(e.value, e.snippet)),
+        };
+        if (!candidate.evidence.some((e) => e.field === 'name')) {
+          events.emit('EXTRACTION_REJECTED', 'warn', `${adapter.id}: company name not in its snippet`, {
+            adapter: adapter.id,
+            name: candidate.name,
+          });
+          continue;
+        }
+        const company = store.upsertCompany(candidate, adapter.id);
+        let state = companies.get(company.id);
+        const isNew = !state;
+        if (!state) {
+          state = { company, hasPosting: false, validated: 0 };
+          companies.set(company.id, state);
+        }
+        const postings = store.savePostings(company, candidate, adapter.id);
+        if (postings > 0) state.hasPosting = true;
+        if (isNew) {
+          events.emit('COMPANY_DISCOVERED', 'info', `${company.name}${company.isAgency ? ' (agency)' : ''}`, {
+            adapter: adapter.id,
+            companyId: company.id,
+            domain: company.domain,
+            sourceUrl: candidate.evidence[0]?.sourceUrl,
+          });
+        }
+        for (const p of candidate.postings) {
+          events.emit('JOB_DISCOVERED', 'info', `${p.title} — ${company.name}`, { companyId: company.id, url: p.url });
+        }
+        if (isNew) {
+          await identifyPeople(state);
+          events.emit(
+            'PROGRESS',
+            'info',
+            `${validated} / ${request.targetCount} contacts · ${companies.size} companies · ${budget.spent().httpRequests} requests`,
+            { validatedContacts: validated, leads: leads(), companies: companies.size, budgetSpent: budget.spent() },
+          );
+          budgetWarnings();
+        }
       }
     } catch (thrown) {
       failedRuns.add(adapter.id);
@@ -140,7 +369,10 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
     }
   }
 
-  if (signal.aborted) return finish('cancelled', 'cancelled');
-  if (discovery.every((a) => health.isDisabled(a.id) || failedRuns.has(a.id))) return finish('failed', 'all_sources_failed');
+  const final = stopCheck();
+  if (final) return finishStopped(final);
+  if (companySources.every((a) => health.isDisabled(a.id) || failedRuns.has(a.id))) {
+    return finish('failed', 'all_sources_failed');
+  }
   return finish('completed', 'sources_exhausted');
 }

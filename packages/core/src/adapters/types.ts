@@ -1,6 +1,6 @@
 import type {
   Company,
-  CompanyCandidate,
+  CompanyCandidateInput,
   Contact,
   ContactCandidate,
   EventLevel,
@@ -10,6 +10,8 @@ import type {
   SourceCapability,
 } from '@scrapjob/schema';
 import type { Budget } from '../budget';
+import type { QueryPlan } from '../planning/queries';
+import type { Taxonomy } from '../taxonomy';
 
 export interface EventSink {
   emit(type: EventType, level: EventLevel, message: string, metadata?: Record<string, unknown>): void;
@@ -23,6 +25,10 @@ export interface SearchContext {
   readonly signal: AbortSignal;
   readonly budget: Budget;
   readonly events: EventSink;
+  readonly plan: QueryPlan;
+  readonly taxonomy: Taxonomy;
+  /** True once the search must stop issuing new work (target, budget, cancel). */
+  shouldStop(): boolean;
 }
 
 export interface SourceAdapter {
@@ -30,7 +36,9 @@ export interface SourceAdapter {
   readonly displayName: string;
   readonly capabilities: ReadonlySet<SourceCapability>;
   isAvailable(): Promise<boolean>;
-  discoverCompanies(ctx: SearchContext): AsyncIterable<CompanyCandidate>;
+  /** Why the adapter is unavailable, shown in the log. */
+  unavailableReason?(): string;
+  discoverCompanies(ctx: SearchContext): AsyncIterable<CompanyCandidateInput>;
   discoverJobs(ctx: SearchContext): AsyncIterable<JobCandidate>;
   discoverPeople(ctx: SearchContext, company: Company): AsyncIterable<ContactCandidate>;
   enrich(ctx: SearchContext, contact: Contact): Promise<EvidencePatch[]>;
