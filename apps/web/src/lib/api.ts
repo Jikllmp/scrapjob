@@ -1,4 +1,6 @@
 import {
+  ContactListDto,
+  CreateExportResponse,
   CreateSearchResponse,
   Problem,
   SearchDto,
@@ -30,4 +32,21 @@ export const getSearch = (id: string) => request(SearchDto, `/api/searches/${enc
 export async function cancelSearch(id: string): Promise<void> {
   const res = await fetch(`/api/searches/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 404) throw new Error(`Cancel failed: HTTP ${res.status}`);
+}
+
+export const listContacts = (searchId: string) =>
+  request(ContactListDto, `/api/searches/${encodeURIComponent(searchId)}/contacts?limit=200`);
+
+/** Builds the spreadsheet on the server (from the database) and starts the download. */
+export async function exportContacts(searchId: string, contactIds?: string[]): Promise<void> {
+  const created = await request(CreateExportResponse, `/api/searches/${encodeURIComponent(searchId)}/export`, {
+    method: 'POST',
+    body: JSON.stringify(contactIds ? { contactIds } : {}),
+  });
+  const link = document.createElement('a');
+  link.href = `/api/exports/${encodeURIComponent(created.exportId)}/download`;
+  link.download = created.filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
 }
