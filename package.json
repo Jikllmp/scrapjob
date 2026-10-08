@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"pnpm --filter @scrapjob/api dev\" \"pnpm --filter @scrapjob/web dev\"",
+    "demo": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"pnpm --filter @scrapjob/api demo\" \"pnpm --filter @scrapjob/web dev\"",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @scrapjob/api db:generate"
