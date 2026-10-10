@@ -13,9 +13,11 @@
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @scrapjob/api db:generate",
     "registry:import": "pnpm --filter @scrapjob/api registry:import",
-    "data:purge": "pnpm --filter @scrapjob/api data:purge"
+    "data:purge": "pnpm --filter @scrapjob/api data:purge",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "concurrently": "^9.2.1",
     "typescript": "~6.0.3",
     "vitest": "^4.0.0"
