@@ -11,7 +11,8 @@
     "demo": "concurrently --names api,web --prefix-colors blue,green --kill-others-on-fail \"pnpm --filter @scrapjob/api demo\" \"pnpm --filter @scrapjob/web dev\"",
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
-    "db:generate": "pnpm --filter @scrapjob/api db:generate"
+    "db:generate": "pnpm --filter @scrapjob/api db:generate",
+    "registry:import": "pnpm --filter @scrapjob/api registry:import"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

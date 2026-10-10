@@ -3,9 +3,11 @@
 Enter a city and a position, and ScrapJob looks for real, named people worth contacting about that kind of job. Every
 value it shows comes with a link to where it was found. It never invents a person, a title or an email address.
 
-**Status: Phase 2 (MVP).** A search queries Brave, reads employer sites and LinkedIn titles seen in search results,
-keeps only evidenced people, scores and deduplicates them, and stops at 20 contacts or when the sources run dry. The
-results table filters, sorts and exports to `.xlsx`. See `docs/ANALYSIS.md` for the plan and its limits.
+**Status: Phase 3 (depth).** A search queries Brave, reads employer sites, their job feeds, conference and press pages
+and LinkedIn titles seen in search results, keeps only evidenced people, scores and deduplicates them, and stops at 20
+contacts or when the sources run dry. Each contact has a detail page showing where every value came from, a deep search
+that adds corroboration with a before/after diff, and an erase button. See `docs/ANALYSIS.md` for the plan and its
+limits.
 
 ## Run it
 
@@ -28,8 +30,20 @@ pnpm demo               # same app, but every request is answered from apps/api/
 ```
 
 Open http://localhost:5173 and search **Développeur .NET** in **Charleroi** (the only search with fixtures). You
-should get 4 contacts at fictional `.test` employers: 2 confirmed, 2 unconfirmed leads. The demo uses a throwaway
-database and export folder in your temp directory.
+should get 5 contacts at fictional `.test` employers: 3 confirmed, 2 unconfirmed leads. Open **Paul Martin** and run a
+deep search: a press article confirms his name and employer, and he stops being a lead. The demo uses a throwaway
+database and export folder in your temp directory, with a synthetic business register already imported.
+
+### Business register (optional)
+
+The `registry` source needs the Belgian KBO/BCE open data. Register for free on the KBO open-data portal, download the
+latest "Full" extract, unzip it, then:
+
+```bash
+pnpm registry:import -- path/to/KboOpenData_xxxx_Full
+```
+
+Without it the source shows as unavailable and the sector score is simply not awarded.
 
 ```bash
 pnpm test               # all tests, no network access
