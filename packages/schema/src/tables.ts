@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
-import { confidences, contactStatuses, deepSearchStatuses, eventLevels, eventTypes, searchStatuses } from './enums';
+import { confidences, contactStatuses, deepSearchStatuses, eventLevels, eventTypes, evidenceSourceKinds, searchStatuses } from './enums';
 
 const id = () => text('id').primaryKey();
 const timestamp = (name: string) => text(name);
@@ -34,6 +34,8 @@ export const companies = sqliteTable(
     industry: text('industry'),
     sizeBucket: text('size_bucket'),
     registryId: text('registry_id'),
+    /** Main NACE-BEL activity code from the business register, e.g. "62.010". */
+    naceCode: text('nace_code'),
     isAgency: integer('is_agency', { mode: 'boolean' }).notNull().default(false),
     genericEmail: text('generic_email'),
   },
@@ -109,8 +111,8 @@ export const evidence = sqliteTable(
     sourceAdapter: text('source_adapter').notNull(),
     sourceUrl: text('source_url').notNull(),
     snippet: text('snippet').notNull(),
-    /** `page`: fetched by the adapter. `search_snippet`: seen only in a search result. */
-    sourceKind: text('source_kind', { enum: ['page', 'search_snippet'] }).notNull().default('page'),
+    /** `page`: fetched by the adapter. `search_snippet`: seen only in a search result. `dataset`: an open-data record. */
+    sourceKind: text('source_kind', { enum: evidenceSourceKinds }).notNull().default('page'),
     publishedAt: timestamp('published_at'),
     retrievedAt: timestamp('retrieved_at').notNull(),
   },
@@ -147,6 +149,12 @@ export const deepSearches = sqliteTable('deep_searches', {
   status: text('status', { enum: deepSearchStatuses }).notNull().default('queued'),
   fieldsBefore: text('fields_before', { mode: 'json' }),
   fieldsAfter: text('fields_after', { mode: 'json' }),
+  /** JSON list of field changes: added, updated, corroborated, contradicted. */
+  changes: text('changes', { mode: 'json' }).$type<unknown[]>().notNull().default(sql`'[]'`),
+  requestsSpent: integer('requests_spent').notNull().default(0),
+  message: text('message'),
+  /** Set by the application: SQLite cannot add a column whose default is an expression. */
+  createdAt: timestamp('created_at'),
   startedAt: timestamp('started_at'),
   finishedAt: timestamp('finished_at'),
 });
@@ -172,3 +180,35 @@ export const blocklist = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.normalisedName, t.companyDomain] })],
 );
+
+/**
+ * Belgian business register (KBO/BCE open data), imported by
+ * `pnpm registry:import`. One row per active enterprise.
+ */
+export const registryEnterprises = sqliteTable('registry_enterprises', {
+  enterpriseNumber: text('enterprise_number').primaryKey(),
+  name: text('name').notNull(),
+  naceCode: text('nace_code'),
+  /** NACE-BEL version of `nace_code` (2025 is preferred over 2008 when both exist). */
+  naceVersion: text('nace_version'),
+  zipcode: text('zipcode'),
+  municipality: text('municipality'),
+});
+
+/** Every registered name of an enterprise (legal, abbreviation, commercial), normalised for lookup. */
+export const registryNames = sqliteTable(
+  'registry_names',
+  {
+    normalisedName: text('normalised_name').notNull(),
+    enterpriseNumber: text('enterprise_number')
+      .notNull()
+      .references(() => registryEnterprises.enterpriseNumber, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.normalisedName, t.enterpriseNumber] })],
+);
+
+/** NACE code descriptions from the register's code table. */
+export const registryNace = sqliteTable('registry_nace', {
+  code: text('code').primaryKey(),
+  description: text('description').notNull(),
+});

@@ -55,11 +55,33 @@ export const HostsFile = z.object({
   agencies: z.array(z.string()),
 });
 
+export const SectorsFile = z.object({
+  fields: z.record(z.string(), z.object({ nace: z.array(z.string().regex(/^\d{2}(\.\d{1,3})?$/)).min(1) })),
+});
+
 export interface Taxonomy {
   synonyms: z.infer<typeof SynonymsFile>;
   roles: z.infer<typeof RolesFile>;
   locations: z.infer<typeof LocationsFile>;
   hosts: z.infer<typeof HostsFile>;
+  sectors: z.infer<typeof SectorsFile>;
+}
+
+/** Digits of a NACE code, "62.010" → "62010". */
+function naceDigits(code: string): string {
+  return code.replace(/\D/g, '');
+}
+
+/**
+ * Whether an employer's NACE code belongs to the position's field. null when
+ * either is unknown, so the score neither rewards nor punishes it.
+ */
+export function sectorMatches(field: string | null, naceCode: string | null, taxonomy: Taxonomy): boolean | null {
+  if (!field || !naceCode) return null;
+  const prefixes = taxonomy.sectors.fields[field]?.nace;
+  if (!prefixes) return null;
+  const digits = naceDigits(naceCode);
+  return prefixes.some((p) => digits.startsWith(naceDigits(p)));
 }
 
 export type Place = z.infer<typeof LocationsFile>['places'][number];

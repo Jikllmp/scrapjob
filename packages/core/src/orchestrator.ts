@@ -1,16 +1,16 @@
-import { CompanyCandidate, type Company } from '@scrapjob/schema';
+import { CompanyCandidate, CompanyPatch, JobCandidate, type Company } from '@scrapjob/schema';
 import type { BudgetSpent } from '@scrapjob/schema/api';
 import { Budget, type BudgetLimits, type BudgetStopReason } from './budget';
 import { normaliseSourceError, type SourceError } from './adapters/errors';
 import { SourceHealth } from './adapters/registry';
 import { isDiscoveryCapable, type EventSink, type SearchContext, type SourceAdapter } from './adapters/types';
-import { contactConfidence, identityConfidence, isStale, type ConfidenceContext } from './contacts/confidence';
+import { identityConfidence, type ConfidenceContext } from './contacts/confidence';
 import { dedupDecision, mergeDrafts } from './contacts/dedup';
 import { isLead, type ContactDraft } from './contacts/fields';
-import { scoreContact, type LocationMatch } from './contacts/scoring';
 import { valueInSnippet } from './extraction/snippet';
 import { planQueries, type QueryPlan } from './planning/queries';
 import { buildDraft } from './pipeline/candidates';
+import { scoreDraft, type ScoringContext } from './pipeline/score';
 import type { PipelineStore, ScoredDraft } from './pipeline/store';
 import type { Taxonomy } from './taxonomy';
 import { containsPhrase, normaliseName } from './text/normalise';
@@ -60,6 +60,7 @@ const stopReasonText: Record<StopReason, string> = {
   sources_exhausted: 'sources exhausted',
   all_sources_failed: 'every source failed',
   no_source_available: 'no company discovery source is available',
+  deep_search_budget_exhausted: 'deep-search request budget exhausted',
   cancelled: 'cancelled by the user',
 };
 
@@ -171,6 +172,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   const discovery = live.filter(isDiscoveryCapable);
   const companySources = discovery.filter((a) => a.capabilities.has('companies'));
   const peopleSources = discovery.filter((a) => a.capabilities.has('people'));
+  const jobSources = discovery.filter((a) => a.capabilities.has('jobs'));
+  const companyEnrichers = live.filter((a) => a.capabilities.has('enrich') && a.enrichCompany);
   if (companySources.length === 0) return finish('failed', 'no_source_available');
 
   const plan: QueryPlan = planQueries(request.location, request.position, taxonomy);
@@ -187,35 +190,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
     shouldStop: () => stopCheck() !== null,
   };
 
-  const locationOf = (draft: ContactDraft, company: Company): LocationMatch => {
-    const city = draft.fields.city ?? company.city;
-    if (city && plan.location.areaNames.some((n) => containsPhrase(city, n))) return 'area';
-    const country = draft.fields.country ?? company.country;
-    if (city || country) {
-      if (country && plan.location.countryCode && containsPhrase(country, plan.location.countryCode)) return 'country';
-      if (country && plan.location.countryName && containsPhrase(country, plan.location.countryName)) return 'country';
-      return 'elsewhere';
-    }
-    return 'unknown';
-  };
-
-  const score = (draft: ContactDraft, state: CompanyState): ScoredDraft => {
-    const confidence = contactConfidence(draft, confCtx());
-    const identity = draft.evidence.filter((e) => e.field === 'full_name' || e.field === 'title');
-    const result = scoreContact({
-      roleTier: draft.roleTier,
-      roleArchetype: draft.roleArchetype,
-      roleGenericOnly: draft.roleGenericOnly,
-      hasOpenPosting: state.hasPosting,
-      sectorMatch: null,
-      location: locationOf(draft, state.company),
-      locationName: plan.location.place?.name ?? plan.location.input,
-      confidence,
-      hasChannel: draft.fields.email !== undefined || draft.fields.profile_url !== undefined,
-      stale: identity.length > 0 && identity.every((e) => isStale(e, new Date(now()))),
-    });
-    return { draft, score: result, confidence };
-  };
+  const scoring = (): ScoringContext => ({ plan, taxonomy, now: new Date(now()) });
+  const score = (draft: ContactDraft, state: CompanyState): ScoredDraft => scoreDraft(draft, state, scoring());
 
   const handleCandidate = (raw: unknown, adapter: SourceAdapter, state: CompanyState): void => {
     const built = buildDraft(raw, adapter.id, state.company, taxonomy, events);
@@ -229,7 +205,7 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
     }
     const draft = built.draft;
     const name = draft.fields.full_name!;
-    if (store.isBlocked(normaliseName(name), state.company.domain)) {
+    if (store.isBlocked(normaliseName(name), state.company)) {
       events.emit('CONTACT_REJECTED', 'info', `${name} is on the erasure blocklist`, { reasons: ['blocklisted'] });
       return;
     }
@@ -287,6 +263,62 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
         otherId: decision.with.id,
         score: decision.score,
       });
+    }
+  };
+
+  /** Register facts (sector, legal name) first, so the people found next are scored with them. */
+  const enrichCompany = async (state: CompanyState): Promise<void> => {
+    for (const adapter of companyEnrichers) {
+      if (health.isDisabled(adapter.id) || stopCheck()) return;
+      try {
+        const raw = await adapter.enrichCompany!(ctx, state.company);
+        if (!raw) continue;
+        const parsed = CompanyPatch.safeParse(raw);
+        const evidence = parsed.success ? parsed.data.evidence.filter((e) => valueInSnippet(e.value, e.snippet)) : [];
+        if (!parsed.success || evidence.length === 0) {
+          events.emit('EXTRACTION_REJECTED', 'warn', `${adapter.id} returned unsupported facts for ${state.company.name}`, {
+            adapter: adapter.id,
+          });
+          continue;
+        }
+        state.company = store.applyCompanyPatch(state.company, { ...parsed.data, evidence }, adapter.id);
+        events.emit('ENRICHMENT_COMPLETED', 'info', `${state.company.name}: ${state.company.industry ?? 'register entry found'}`, {
+          adapter: adapter.id,
+          companyId: state.company.id,
+          registryId: state.company.registryId,
+          naceCode: state.company.naceCode,
+        });
+      } catch (thrown) {
+        recordFailure(normaliseSourceError(adapter.id, thrown));
+      }
+    }
+  };
+
+  /** Open postings from the employer's job feed: the strongest sign it is hiring for this position. */
+  const discoverJobs = async (state: CompanyState): Promise<void> => {
+    for (const adapter of jobSources) {
+      if (health.isDisabled(adapter.id) || stopCheck()) return;
+      try {
+        for await (const raw of adapter.discoverJobs(ctx, state.company)) {
+          const parsed = JobCandidate.safeParse(raw);
+          if (!parsed.success || !parsed.data.evidence.some((e) => valueInSnippet(e.value, e.snippet))) {
+            events.emit('EXTRACTION_REJECTED', 'warn', `${adapter.id} returned an invalid job posting`, { adapter: adapter.id });
+            continue;
+          }
+          const job = parsed.data;
+          if (!plan.positionTerms.some((t) => containsPhrase(job.title, t))) continue;
+          state.hasPosting = true;
+          if (store.saveJob(state.company, job, adapter.id)) {
+            events.emit('JOB_DISCOVERED', 'info', `${job.title} — ${state.company.name}`, {
+              adapter: adapter.id,
+              companyId: state.company.id,
+              url: job.url,
+            });
+          }
+        }
+      } catch (thrown) {
+        recordFailure(normaliseSourceError(adapter.id, thrown));
+      }
     }
   };
 
@@ -353,6 +385,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
           events.emit('JOB_DISCOVERED', 'info', `${p.title} — ${company.name}`, { companyId: company.id, url: p.url });
         }
         if (isNew) {
+          await enrichCompany(state);
+          await discoverJobs(state);
           await identifyPeople(state);
           events.emit(
             'PROGRESS',

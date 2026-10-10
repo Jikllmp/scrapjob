@@ -1,15 +1,16 @@
 import type {
   Company,
   CompanyCandidateInput,
-  Contact,
+  CompanyPatch,
   ContactCandidate,
+  EnrichResultInput,
   EventLevel,
   EventType,
-  EvidencePatch,
   JobCandidate,
   SourceCapability,
 } from '@scrapjob/schema';
 import type { Budget } from '../budget';
+import type { ContactField } from '../contacts/fields';
 import type { QueryPlan } from '../planning/queries';
 import type { Taxonomy } from '../taxonomy';
 
@@ -31,17 +32,31 @@ export interface SearchContext {
   shouldStop(): boolean;
 }
 
+/** The contact a deep search works on: its current values and its employer. */
+export interface EnrichTarget {
+  contactId: string;
+  fields: Partial<Record<ContactField, string>>;
+  company: Company | null;
+}
+
+/**
+ * Differences from the spec's interface (ADR 0005): `discoverJobs` is asked per
+ * employer, because job feeds are per employer; `enrich` receives the employer
+ * and may return a relevant posting; `enrichCompany` adds register facts.
+ */
 export interface SourceAdapter {
   readonly id: string;
   readonly displayName: string;
   readonly capabilities: ReadonlySet<SourceCapability>;
   isAvailable(): Promise<boolean>;
-  /** Why the adapter is unavailable, shown in the log. */
+  /** Why the adapter is unavailable, shown in the log and the sources view. */
   unavailableReason?(): string;
   discoverCompanies(ctx: SearchContext): AsyncIterable<CompanyCandidateInput>;
-  discoverJobs(ctx: SearchContext): AsyncIterable<JobCandidate>;
+  discoverJobs(ctx: SearchContext, company: Company): AsyncIterable<JobCandidate>;
   discoverPeople(ctx: SearchContext, company: Company): AsyncIterable<ContactCandidate>;
-  enrich(ctx: SearchContext, contact: Contact): Promise<EvidencePatch[]>;
+  enrich(ctx: SearchContext, target: EnrichTarget): Promise<EnrichResultInput>;
+  /** Facts about the employer itself (register, sector). Only sources with the `enrich` capability are asked. */
+  enrichCompany?(ctx: SearchContext, company: Company): Promise<CompanyPatch | null>;
 }
 
 export const discoveryCapabilities: readonly SourceCapability[] = ['companies', 'jobs', 'people'];
