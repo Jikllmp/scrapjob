@@ -22,6 +22,13 @@
       "when": 1791502869479,
       "tag": "0002_evidence_source_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791673619378,
+      "tag": "0003_registry_and_deep_search",
+      "breakpoints": true
     }
   ]
 }

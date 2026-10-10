@@ -17,6 +17,7 @@ import { registerEventRoutes } from './routes/events';
 import { registerMetaRoutes } from './routes/meta';
 import { registerSearchRoutes } from './routes/searches';
 import { SearchRunner } from './searches/runner';
+import { DeepSearchRunner } from './deep-search/runner';
 
 export interface BuildOptions {
   databasePath: string;
@@ -56,9 +57,10 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
     ...(options.clock ?? {}),
   });
   const brave = new BraveSearch(http, config.BRAVE_API_KEY);
-  const registry = new AdapterRegistry(options.adapters ?? createAdapters({ http, brave }), config.ENABLED_SOURCES);
+  const registry = new AdapterRegistry(options.adapters ?? createAdapters({ http, brave, db }), config.ENABLED_SOURCES);
   const store = new DrizzlePipelineStore(db);
   const runner = new SearchRunner(db, events, registry, store, taxonomy, config, app.log);
+  const deepSearch = new DeepSearchRunner(db, events, registry, store, taxonomy, config, app.log);
   const ctx: AppContext = {
     config,
     db,
@@ -66,9 +68,10 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
     events,
     registry,
     runner,
+    deepSearch,
     taxonomy,
     exportDir: options.exportDir,
-    version: '0.2.0',
+    version: '0.3.0',
   };
 
   registerProblemHandlers(app);
@@ -79,6 +82,7 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
 
   app.addHook('onClose', async () => {
     await runner.shutdown();
+    await deepSearch.shutdown();
     db.$client.close();
   });
   return { app, ctx };

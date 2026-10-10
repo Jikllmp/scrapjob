@@ -11,22 +11,9 @@ import {
 import { tables, type Confidence } from '@scrapjob/schema';
 import type { ContactRowDto } from '@scrapjob/schema/api';
 import type { Db } from '../db/client';
+import { toAttributed, valueOf } from './draft';
 
 const { contacts, companies, evidence, jobOpportunities } = tables;
-
-const valueOf: Record<(typeof contactFields)[number], (c: typeof contacts.$inferSelect, companyName: string | null) => string | null> = {
-  first_name: (c) => c.firstName,
-  last_name: (c) => c.lastName,
-  full_name: (c) => c.fullName,
-  title: (c) => c.title,
-  department: (c) => c.department,
-  profile_url: (c) => c.profileUrl,
-  email: (c) => c.email,
-  phone: (c) => c.phone,
-  city: (c) => c.city,
-  country: (c) => c.country,
-  company: (_c, companyName) => companyName,
-};
 
 /**
  * Validated contacts of a search, with everything the table and the export
@@ -57,18 +44,7 @@ export function loadContactRows(db: Db, searchId: string, taxonomy: Taxonomy, id
 
   return rows
     .map(({ contact, company }) => {
-      const ev: AttributedEvidence[] = allEvidence
-        .filter((e) => e.contactId === contact.id)
-        .map((e) => ({
-          field: e.field as AttributedEvidence['field'],
-          value: e.valueSeen,
-          sourceUrl: e.sourceUrl,
-          snippet: e.snippet,
-          sourceKind: e.sourceKind,
-          retrievedAt: e.retrievedAt,
-          ...(e.publishedAt ? { publishedAt: e.publishedAt } : {}),
-          sourceAdapter: e.sourceAdapter,
-        }));
+      const ev: AttributedEvidence[] = allEvidence.filter((e) => e.contactId === contact.id).map(toAttributed);
       const ref: CompanyRef | null = company
         ? { id: company.id, name: company.name, domain: company.domain, isAgency: company.isAgency }
         : null;
@@ -117,9 +93,13 @@ export function loadContactRows(db: Db, searchId: string, taxonomy: Taxonomy, id
         lead: isLead(lowestConfidence([perField.full_name ?? 'UNKNOWN', perField.company ?? 'UNKNOWN'])),
         fieldConfidence: perField,
         possibleDuplicateOf: contact.duplicateOfId,
+        contradicted: Object.entries(contact.fieldFlags)
+          .filter(([, flags]) => flags.includes('contradicted'))
+          .map(([field]) => field),
         sources: [...new Set(ev.map((e) => e.sourceAdapter))],
         primarySourceUrl: primary?.sourceUrl ?? null,
-        jobPostingUrl: postings.find((p) => p.companyId === company?.id)?.url ?? null,
+        jobPostingUrl:
+          postings.find((p) => p.id === contact.jobOpportunityId)?.url ?? postings.find((p) => p.companyId === company?.id)?.url ?? null,
         collectedAt: contact.collectedAt,
         notes: contact.notes,
       } satisfies ContactRowDto;

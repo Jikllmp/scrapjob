@@ -136,15 +136,18 @@ describe('search routes', () => {
 describe('meta routes', () => {
   it('reports health and the source registry', async () => {
     built = testApp();
-    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.2.0' });
-    expect((await built.app.inject({ url: '/api/sources' })).json()).toEqual({
-      items: [
-        { id: 'web-search', displayName: 'Web search (Brave)', capabilities: ['companies'], enabled: false, available: false },
-        { id: 'company-site', displayName: 'Employer websites', capabilities: ['people'], enabled: false, available: false },
-        { id: 'linkedin-public', displayName: 'LinkedIn titles (via web search)', capabilities: ['people'], enabled: false, available: false },
-        { id: 'noop', displayName: 'No-op source', capabilities: ['companies'], enabled: true, available: true },
-      ],
-    });
+    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.3.0' });
+    const { items } = (await built.app.inject({ url: '/api/sources' })).json() as { items: Record<string, unknown>[] };
+    expect(items.map((s) => [s.id, s.capabilities, s.enabled, s.available, s.unavailableReason])).toEqual([
+      ['web-search', ['companies', 'enrich'], false, false, 'BRAVE_API_KEY is not set'],
+      ['registry', ['enrich'], false, false, 'the business register is not imported yet (pnpm registry:import -- <folder>)'],
+      ['job-board', ['jobs'], false, false, 'USER_AGENT_CONTACT_URL is not set, and no feed is read without one'],
+      ['company-site', ['people', 'enrich'], false, false, 'USER_AGENT_CONTACT_URL is not set, and no site is crawled without one'],
+      ['linkedin-public', ['people', 'enrich'], false, false, 'BRAVE_API_KEY is not set'],
+      ['press-events', ['people'], false, false, 'BRAVE_API_KEY is not set'],
+      ['noop', ['companies'], true, true, null],
+    ]);
+    expect(items.every((s) => s.contacts === 0 && s.lastSearch === null)).toBe(true);
   });
 });
 

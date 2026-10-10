@@ -7,7 +7,7 @@ describe('loadConfig', () => {
     expect(config.PORT).toBe(3001);
     expect(config.MAX_CONTACTS_PER_SEARCH).toBe(20);
     expect(config.MIN_RELEVANCE_SCORE).toBe(35);
-    expect(config.ENABLED_SOURCES).toEqual(['web-search', 'company-site', 'linkedin-public']);
+    expect(config.ENABLED_SOURCES).toEqual(['web-search', 'registry', 'job-board', 'company-site', 'linkedin-public', 'press-events']);
     expect(config.ENABLE_HEADLESS).toBe(false);
     expect(config.BRAVE_API_KEY).toBeUndefined();
   });

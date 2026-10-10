@@ -38,6 +38,8 @@ function main(): void {
   const { app, ctx } = built;
   const resumed = ctx.runner.resumeInterrupted();
   if (resumed > 0) app.log.info({ resumed }, 'resumed interrupted searches');
+  const resumedDeep = ctx.deepSearch.resumeInterrupted();
+  if (resumedDeep > 0) app.log.info({ resumed: resumedDeep }, 'resumed interrupted deep searches');
 
   app.listen({ port: config.PORT, host: '127.0.0.1' }).then(
     () => app.log.info(`API ready on http://localhost:${config.PORT} (database: ${dbPath})`),

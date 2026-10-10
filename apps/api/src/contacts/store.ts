@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import {
   normaliseCompanyName,
   type AttributedEvidence,
   type ContactDraft,
   type ContactField,
+  type DeepSearchStore,
   type PipelineStore,
   type ScoredDraft,
 } from '@scrapjob/core';
-import { tables, type Company, type CompanyCandidate } from '@scrapjob/schema';
+import { tables, type Company, type CompanyCandidate, type CompanyPatch, type JobCandidate, type PostingCandidate } from '@scrapjob/schema';
 import type { Db } from '../db/client';
 
 const { companies, contacts, evidence, jobOpportunities, blocklist } = tables;
@@ -52,8 +53,16 @@ function columns(draft: ContactDraft): ContactColumns {
   return out;
 }
 
+/**
+ * How the erasure blocklist names an employer: its domain, or its normalised
+ * name when it has none (an employer seen only on an ATS).
+ */
+export function blocklistCompanyKey(company: Pick<Company, 'domain' | 'name'>): string {
+  return company.domain ?? `name:${normaliseCompanyName(company.name)}`;
+}
+
 /** PipelineStore over SQLite. Every write that touches contact fields runs in one transaction with its evidence. */
-export class DrizzlePipelineStore implements PipelineStore {
+export class DrizzlePipelineStore implements PipelineStore, DeepSearchStore {
   constructor(private readonly db: Db) {}
 
   upsertCompany(candidate: CompanyCandidate, adapter: string): Company {
@@ -102,36 +111,68 @@ export class DrizzlePipelineStore implements PipelineStore {
 
   savePostings(company: Company, candidate: CompanyCandidate, adapter: string): number {
     for (const p of candidate.postings) {
-      const exists = postingExists(this.db, company.id, p.url);
-      if (exists) continue;
-      this.db
-        .insert(jobOpportunities)
-        .values({
-          id: randomUUID(),
-          companyId: company.id,
-          title: p.title,
-          url: p.url,
-          postedAt: p.postedAt ?? null,
-          sourceAdapter: adapter,
-          location: candidate.city ?? null,
-        })
-        .run();
+      if (postingExists(this.db, company.id, p.url)) continue;
+      this.insertPosting(company.id, { ...p, ...(candidate.city ? { location: candidate.city } : {}) }, adapter);
     }
     return candidate.postings.length;
   }
 
-  isBlocked(normalisedName: string, companyDomain: string | null): boolean {
+  saveJob(company: Company, job: JobCandidate, adapter: string): boolean {
+    if (postingExists(this.db, company.id, job.url)) return false;
+    this.insertPosting(company.id, job, adapter);
+    return true;
+  }
+
+  private insertPosting(companyId: string, posting: PostingCandidate & { location?: string }, adapter: string): string {
+    const id = randomUUID();
+    this.db
+      .insert(jobOpportunities)
+      .values({
+        id,
+        companyId,
+        title: posting.title,
+        url: posting.url,
+        postedAt: posting.postedAt ?? null,
+        sourceAdapter: adapter,
+        location: posting.location ?? null,
+      })
+      .run();
+    return id;
+  }
+
+  applyCompanyPatch(company: Company, patch: CompanyPatch, adapter: string): Company {
+    return this.db.transaction((tx) => {
+      for (const e of patch.evidence) tx.insert(evidence).values(this.evidenceRow(e, adapter, { companyId: company.id })).run();
+      const set: Partial<Company> = {};
+      if (patch.registryId) set.registryId = patch.registryId;
+      if (patch.industry) set.industry = patch.industry;
+      if (patch.naceCode) set.naceCode = patch.naceCode;
+      if (Object.keys(set).length === 0) return company;
+      return tx.update(companies).set(set).where(eq(companies.id, company.id)).returning().get();
+    });
+  }
+
+  isBlocked(normalisedName: string, company: Company): boolean {
     const row = this.db
       .select({ name: blocklist.normalisedName })
       .from(blocklist)
-      .where(
-        and(
-          eq(blocklist.normalisedName, normalisedName),
-          or(eq(blocklist.companyDomain, companyDomain ?? ''), eq(blocklist.companyDomain, '')),
-        ),
-      )
+      .where(and(eq(blocklist.normalisedName, normalisedName), eq(blocklist.companyDomain, blocklistCompanyKey(company))))
       .get();
     return row !== undefined;
+  }
+
+  saveEnriched(contactId: string, scored: ScoredDraft): void {
+    this.updateContact(contactId, scored);
+  }
+
+  linkPosting(contactId: string, company: Company, posting: PostingCandidate, adapter: string): void {
+    const known = this.db
+      .select({ id: jobOpportunities.id })
+      .from(jobOpportunities)
+      .where(and(eq(jobOpportunities.companyId, company.id), eq(jobOpportunities.url, posting.url)))
+      .get();
+    const jobId = known?.id ?? this.insertPosting(company.id, posting, adapter);
+    this.db.update(contacts).set({ jobOpportunityId: jobId }).where(eq(contacts.id, contactId)).run();
   }
 
   insertContact(searchId: string, scored: ScoredDraft): string {
