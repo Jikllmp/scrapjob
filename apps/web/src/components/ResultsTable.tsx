@@ -12,6 +12,7 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { useMemo, useState } from 'react';
+import { Link } from '../lib/router';
 import { ConfidenceChip } from './ConfidenceChip';
 
 export type QuickFilter = 'all' | 'confirmed' | 'leads';
@@ -82,10 +83,17 @@ export function ResultsTable({ rows, loading, quickFilter, onExport, exporting }
         header: 'Name',
         cell: ({ row }) => (
           <div>
-            <span className="font-medium">{row.original.fullName}</span>
+            <Link to={`/contacts/${row.original.id}`} className="font-medium hover:underline">
+              {row.original.fullName}
+            </Link>
             {row.original.lead && (
               <span className="ml-1.5 rounded bg-neutral-200 px-1 text-[10px] font-medium uppercase text-neutral-700" title="Seen only in search results; confirm before writing">
                 Lead
+              </span>
+            )}
+            {row.original.contradicted.length > 0 && (
+              <span className="ml-1.5 rounded bg-red-100 px-1 text-[10px] font-medium uppercase text-red-800" title={`Contradicted: ${row.original.contradicted.join(', ')}`}>
+                Contradicted
               </span>
             )}
             {row.original.possibleDuplicateOf && (

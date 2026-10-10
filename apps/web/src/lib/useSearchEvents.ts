@@ -7,9 +7,10 @@ export type StreamState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'clo
 
 /**
  * Follows a search's SSE stream. EventSource reconnects on its own and sends
- * Last-Event-ID, so the server replays whatever was missed.
+ * Last-Event-ID, so the server replays whatever was missed. With `follow`, the
+ * stream stays open after the search ends, for the deep searches that run on it later.
  */
-export function useSearchEvents(searchId: string | null): { events: SearchEvent[]; state: StreamState } {
+export function useSearchEvents(searchId: string | null, follow = false): { events: SearchEvent[]; state: StreamState } {
   const [events, setEvents] = useState<SearchEvent[]>([]);
   const [state, setState] = useState<StreamState>('idle');
 
@@ -28,17 +29,22 @@ export function useSearchEvents(searchId: string | null): { events: SearchEvent[
       if (!parsed.success) return;
       const event = parsed.data;
       setEvents((prev) => (prev.length > 0 && prev[prev.length - 1]!.seq >= event.seq ? prev : [...prev, event]));
-      if (terminalTypes.has(event.type)) {
+      if (!follow && terminalTypes.has(event.type)) {
         source.close();
         setState('closed');
       }
     };
     return () => source.close();
-  }, [searchId]);
+  }, [searchId, follow]);
 
   return { events, state };
 }
 
 export function isTerminal(event: SearchEvent | undefined): boolean {
   return event !== undefined && terminalTypes.has(event.type);
+}
+
+/** The search has ended (its stream may go on carrying deep-search events). */
+export function hasEnded(events: SearchEvent[]): boolean {
+  return events.some((e) => terminalTypes.has(e.type));
 }
