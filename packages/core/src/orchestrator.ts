@@ -278,7 +278,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   /** Register facts (sector, legal name) first, so the people found next are scored with them. */
   const enrichCompany = async (state: CompanyState): Promise<void> => {
     for (const adapter of companyEnrichers) {
-      if (health.isDisabled(adapter.id) || stopCheck()) return;
+      if (stopCheck()) return;
+      if (health.isDisabled(adapter.id)) continue;
       try {
         const raw = await adapter.enrichCompany!(ctx, state.company);
         if (!raw) continue;
@@ -306,7 +307,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   /** Open postings from the employer's job feed: the strongest sign it is hiring for this position. */
   const discoverJobs = async (state: CompanyState): Promise<void> => {
     for (const adapter of jobSources) {
-      if (health.isDisabled(adapter.id) || stopCheck()) return;
+      if (stopCheck()) return;
+      if (health.isDisabled(adapter.id)) continue;
       try {
         for await (const raw of adapter.discoverJobs(ctx, state.company)) {
           const parsed = JobCandidate.safeParse(raw);
@@ -333,7 +335,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
 
   const identifyPeople = async (state: CompanyState): Promise<void> => {
     for (const adapter of peopleSources) {
-      if (state.validated >= PEOPLE_PER_COMPANY - 1 || health.isDisabled(adapter.id) || stopCheck()) return;
+      if (state.validated >= PEOPLE_PER_COMPANY - 1 || stopCheck()) return;
+      if (health.isDisabled(adapter.id)) continue;
       try {
         for await (const raw of adapter.discoverPeople(ctx, state.company)) {
           handleCandidate(raw, adapter, state);

@@ -182,6 +182,29 @@ describe('company-site adapter', () => {
     expect(people).toMatchObject([{ fullName: 'Anne Petit', postingContact: true, companyName: 'Globex IT' }]);
   });
 
+  it.each<[string, number, string]>([
+    ['rate limited', 429, 'RateLimited'],
+    ['forbidden', 403, 'RateLimited'],
+    ['server error', 503, 'SourceUnavailable'],
+  ])('reports a %s home page as %s', async (_name, status, kind) => {
+    const { http, fixtures } = setup();
+    fixtures.override('https://www.acme-software.test/', { status });
+    expect(await failure(collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, acme)))).toMatchObject({ kind });
+  });
+
+  it.each<[string, { headers?: Record<string, string>; body?: string }]>([
+    ['a PDF', { headers: { 'content-type': 'application/pdf' }, body: '%PDF-1.7' }],
+    ['X-Robots-Tag: noindex', { headers: { 'content-type': 'text/html', 'x-robots-tag': 'noindex' }, body: '<h3>Marie Dupont</h3>' }],
+    ['a meta robots noindex', { headers: { 'content-type': 'text/html' }, body: '<meta name="robots" content="noindex"><h3>Marie Dupont</h3><p>Talent Acquisition Manager</p>' }],
+  ])('reads no one from %s', async (_name, response) => {
+    const { http, fixtures } = setup();
+    for (const path of ['', 'equipe', 'carrieres', 'carrieres/developpeur-net']) {
+      fixtures.override(`https://www.acme-software.test/${path}`, { status: 200, ...response });
+    }
+    const people = await collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, acme));
+    expect(people).toEqual([]);
+  });
+
   it('refuses to crawl without a contact URL in the User-Agent', async () => {
     const { http } = setup(null);
     expect(await new CompanySiteAdapter(http).isAvailable()).toBe(false);
@@ -200,6 +223,19 @@ describe('linkedin-public adapter', () => {
     ]);
     expect(leads.flatMap((l) => l.evidence).every((e) => e.sourceKind === 'search_snippet')).toBe(true);
     expect(fixtures.requests.map((r) => new URL(r.url).hostname)).toEqual(['api.search.brave.com']);
+  });
+
+  it('reports a rate-limited search API as RateLimited and fetches nothing else', async () => {
+    const probe = setup();
+    await collect(new LinkedInPublicAdapter(probe.brave).discoverPeople(searchContext().ctx, company('Acme Software', null, 'acme-software.test')));
+    const { brave, fixtures } = setup();
+    for (const r of probe.fixtures.requests) fixtures.override(r.url, { status: 429 });
+    const { ctx, events } = searchContext();
+    expect(await failure(collect(new LinkedInPublicAdapter(brave).discoverPeople(ctx, company('Acme Software', null, 'acme-software.test'))))).toMatchObject({
+      kind: 'RateLimited',
+    });
+    expect(events.map((e) => e.type)).toEqual(['QUERY_STARTED', 'RATE_LIMITED']);
+    expect(fixtures.requests).toHaveLength(1);
   });
 
   it('drops people the result places at another company', async () => {
