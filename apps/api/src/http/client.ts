@@ -1,5 +1,5 @@
 import robotsParser from 'robots-parser';
-import { sourceFailure, type SearchContext } from '@scrapjob/core';
+import { SourceFailure, sourceFailure, type SearchContext } from '@scrapjob/core';
 import { HostRateLimiter, Semaphore } from './limits';
 import { TransportTimeout, type Transport, type TransportResponse } from './transport';
 
@@ -30,16 +30,25 @@ export interface GetOptions {
 
 type Robots = ReturnType<typeof robotsParser>;
 type RobotsEntry = { robots: Robots | null; disallowAll: boolean };
+type Circuit = { failures: number; open: boolean };
+
+/** Consecutive failed requests to one host before the client stops calling it for the rest of the search. */
+export const CIRCUIT_BREAKER_THRESHOLD = 5;
+/** A cached robots.txt is re-read after a day (RFC 9309 asks for at most 24 hours). */
+export const ROBOTS_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The only way adapters reach the network. It sends an honest User-Agent,
  * honours robots.txt and X-Robots-Tag, rate-limits per host, caps concurrency,
- * retries only timeouts and 5xx, and backs off on 429/403.
+ * retries only timeouts and 5xx, backs off on 429/403, and opens a per-host
+ * circuit breaker after repeated failures within one search.
  */
 export class HttpClient {
   private readonly limiter: HostRateLimiter;
   private readonly semaphore: Semaphore;
-  private readonly robotsCache = new Map<string, Promise<RobotsEntry>>();
+  private readonly robotsCache = new Map<string, { entry: Promise<RobotsEntry>; at: number }>();
+  /** Keyed by the search's budget, so a finished search's breakers are garbage-collected with it. */
+  private readonly circuits = new WeakMap<object, Map<string, Circuit>>();
   private readonly backoffs = new Map<string, number>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -62,6 +71,44 @@ export class HttpClient {
   /** Fetches a URL. Returns non-error statuses (2xx, 3xx, 404, …) for the caller to judge. */
   async get(url: string, opts: GetOptions): Promise<TransportResponse> {
     const parsed = new URL(url);
+    const circuit = this.circuitFor(parsed.host, opts);
+    if (circuit.open) throw sourceFailure(opts.adapter, 'SourceUnavailable', `${parsed.host} failed repeatedly; skipped for this search`, url);
+    try {
+      const res = await this.getChecked(url, parsed, opts);
+      circuit.failures = 0;
+      return res;
+    } catch (err) {
+      if (isHostFailure(err)) this.recordFailure(circuit, parsed.host, opts);
+      throw err;
+    }
+  }
+
+  private circuitFor(host: string, opts: GetOptions): Circuit {
+    let byHost = this.circuits.get(opts.ctx.budget);
+    if (!byHost) {
+      byHost = new Map();
+      this.circuits.set(opts.ctx.budget, byHost);
+    }
+    let circuit = byHost.get(host);
+    if (!circuit) {
+      circuit = { failures: 0, open: false };
+      byHost.set(host, circuit);
+    }
+    return circuit;
+  }
+
+  private recordFailure(circuit: Circuit, host: string, opts: GetOptions): void {
+    circuit.failures += 1;
+    if (circuit.open || circuit.failures < CIRCUIT_BREAKER_THRESHOLD) return;
+    circuit.open = true;
+    opts.ctx.events.emit('WARNING', 'warn', `${host} failed ${circuit.failures} times in a row; skipping it for the rest of this search`, {
+      adapter: opts.adapter,
+      host,
+      circuitBreaker: 'open',
+    });
+  }
+
+  private async getChecked(url: string, parsed: URL, opts: GetOptions): Promise<TransportResponse> {
     let crawlDelayMs = 0;
     if (opts.robots !== false) {
       const entry = await this.robotsFor(parsed.origin, opts);
@@ -82,7 +129,8 @@ export class HttpClient {
   }
 
   private robotsFor(origin: string, opts: GetOptions): Promise<RobotsEntry> {
-    let entry = this.robotsCache.get(origin);
+    const cached = this.robotsCache.get(origin);
+    let entry = cached && this.now() - cached.at < ROBOTS_TTL_MS ? cached.entry : undefined;
     if (!entry) {
       const robotsUrl = `${origin}/robots.txt`;
       entry = this.fetchWithRetries(robotsUrl, opts, 0).then(
@@ -98,7 +146,7 @@ export class HttpClient {
           return { robots: null, disallowAll: true };
         },
       );
-      this.robotsCache.set(origin, entry);
+      this.robotsCache.set(origin, { entry, at: this.now() });
     }
     return entry;
   }
@@ -156,4 +204,8 @@ export class HttpClient {
       await this.sleep(delay);
     }
   }
+}
+
+function isHostFailure(err: unknown): boolean {
+  return err instanceof SourceFailure && ['SourceUnavailable', 'Timeout', 'RateLimited'].includes(err.error.kind);
 }

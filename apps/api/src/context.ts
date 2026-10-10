@@ -5,6 +5,7 @@ import type { EventBus } from './events/bus';
 import type { EventStore } from './events/store';
 import type { DeepSearchRunner } from './deep-search/runner';
 import type { SearchRunner } from './searches/runner';
+import type { RetentionJob } from './privacy/retention';
 
 export interface AppContext {
   config: Config;
@@ -14,6 +15,7 @@ export interface AppContext {
   registry: AdapterRegistry;
   runner: SearchRunner;
   deepSearch: DeepSearchRunner;
+  retention: RetentionJob;
   taxonomy: Taxonomy;
   exportDir: string;
   version: string;

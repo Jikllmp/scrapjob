@@ -36,6 +36,7 @@ function main(): void {
     throw err;
   }
   const { app, ctx } = built;
+  ctx.retention.start();
   const resumed = ctx.runner.resumeInterrupted();
   if (resumed > 0) app.log.info({ resumed }, 'resumed interrupted searches');
   const resumedDeep = ctx.deepSearch.resumeInterrupted();

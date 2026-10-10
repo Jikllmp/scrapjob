@@ -7,6 +7,7 @@ import {
   Problem,
   SearchDto,
   SearchListDto,
+  PrivacyDto,
   SourceListDto,
   type CreateSearchBody,
 } from '@scrapjob/schema/api';
@@ -43,6 +44,7 @@ export const startDeepSearch = (id: string) =>
   request(CreateDeepSearchResponse, `/api/contacts/${encodeURIComponent(id)}/deep-search`, { method: 'POST' });
 
 export const listSources = () => request(SourceListDto, '/api/sources');
+export const getPrivacy = () => request(PrivacyDto, '/api/privacy');
 
 async function remove(url: string): Promise<void> {
   const res = await fetch(url, { method: 'DELETE' });

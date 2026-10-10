@@ -95,6 +95,15 @@ export const SourceListDto = z.object({ items: z.array(SourceDto) });
 
 export const HealthDto = z.object({ status: z.literal('ok'), version: z.string() });
 
+/** What the privacy page shows about the data this copy of the tool holds. */
+export const PrivacyDto = z.object({
+  retentionDays: z.number().int(),
+  contacts: z.number().int(),
+  oldestCollectedAt: z.string().nullable(),
+  blocklistEntries: z.number().int(),
+});
+export type PrivacyDto = z.infer<typeof PrivacyDto>;
+
 /** RFC 9457 problem details. */
 export const Problem = z.object({
   type: z.string(),

@@ -9,7 +9,8 @@
     "demo": "tsx scripts/demo-server.ts",
     "registry:import": "tsx scripts/registry-import.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "data:purge": "tsx scripts/data-purge.ts"
   },
   "dependencies": {
     "@scrapjob/core": "workspace:*",

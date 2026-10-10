@@ -1,15 +1,26 @@
 import { desc, eq, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { tables } from '@scrapjob/schema';
-import { HealthDto, SourceListDto, type SourceDto } from '@scrapjob/schema/api';
+import { HealthDto, PrivacyDto, SourceListDto, type SourceDto } from '@scrapjob/schema/api';
 import type { AppContext } from '../context';
 
-const { evidence, searches, searchEvents } = tables;
+const { blocklist, contacts, evidence, searches, searchEvents } = tables;
 
 export function registerMetaRoutes(app: FastifyInstance, ctx: AppContext): void {
   const { db } = ctx;
 
   app.get('/api/health', async () => HealthDto.parse({ status: 'ok', version: ctx.version }));
+
+  app.get('/api/privacy', async () => {
+    const held = db.select({ n: sql<number>`count(*)`, oldest: sql<string | null>`min(${contacts.collectedAt})` }).from(contacts).get();
+    const blocked = db.select({ n: sql<number>`count(*)` }).from(blocklist).get();
+    return PrivacyDto.parse({
+      retentionDays: ctx.config.DATA_RETENTION_DAYS,
+      contacts: held?.n ?? 0,
+      oldestCollectedAt: held?.oldest ?? null,
+      blocklistEntries: blocked?.n ?? 0,
+    });
+  });
 
   /** The registry with each source's health: availability now, yield so far, and how it behaved in the last search. */
   app.get('/api/sources', async () => {

@@ -12,7 +12,8 @@
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @scrapjob/api db:generate",
-    "registry:import": "pnpm --filter @scrapjob/api registry:import"
+    "registry:import": "pnpm --filter @scrapjob/api registry:import",
+    "data:purge": "pnpm --filter @scrapjob/api data:purge"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

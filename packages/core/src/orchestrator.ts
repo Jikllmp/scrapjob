@@ -32,6 +32,12 @@ export interface OrchestratorOptions {
   sourceFailureThreshold: number;
   signal: AbortSignal;
   now?: () => number;
+  /**
+   * Contacts already stored for this search, when it resumes after a restart.
+   * They count toward the target and new sightings merge into them instead of
+   * becoming new rows.
+   */
+  existing?: readonly ContactDraft[];
 }
 
 export type StopReason =
@@ -89,9 +95,12 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   const budget = new Budget(options.limits, now);
   const health = new SourceHealth(options.sourceFailureThreshold);
   const confCtx = (): ConfidenceContext => ({ taxonomy, now: new Date(now()) });
-  const contacts: TrackedContact[] = [];
+  const contacts: TrackedContact[] = (options.existing ?? []).map((draft) => ({
+    draft,
+    lead: isLead(identityConfidence(draft, confCtx())),
+  }));
   const companies = new Map<string, CompanyState>();
-  let validated = 0;
+  let validated = contacts.length;
   const warned = new Set<string>();
 
   const stopCheck = (): StopReason | null => {

@@ -136,7 +136,7 @@ describe('search routes', () => {
 describe('meta routes', () => {
   it('reports health and the source registry', async () => {
     built = testApp();
-    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.3.0' });
+    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.4.0' });
     const { items } = (await built.app.inject({ url: '/api/sources' })).json() as { items: Record<string, unknown>[] };
     expect(items.map((s) => [s.id, s.capabilities, s.enabled, s.available, s.unavailableReason])).toEqual([
       ['web-search', ['companies', 'enrich'], false, false, 'BRAVE_API_KEY is not set'],
@@ -148,6 +148,16 @@ describe('meta routes', () => {
       ['noop', ['companies'], true, true, null],
     ]);
     expect(items.every((s) => s.contacts === 0 && s.lastSearch === null)).toBe(true);
+  });
+
+  it('reports what the privacy page needs', async () => {
+    built = testApp({ DATA_RETENTION_DAYS: '90' });
+    expect((await built.app.inject({ url: '/api/privacy' })).json()).toEqual({
+      retentionDays: 90,
+      contacts: 0,
+      oldestCollectedAt: null,
+      blocklistEntries: 0,
+    });
   });
 });
 
