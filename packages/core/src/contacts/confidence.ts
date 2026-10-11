@@ -59,6 +59,8 @@ export function fieldConfidence(
   const independent = new Set(agreeing.map((e) => registrableDomain(e.sourceUrl)));
   if (independent.size >= 2) return 'HIGH';
   if (agreeing.some((e) => e.sourceKind === 'page' && !isAggregator(e.sourceUrl, ctx.taxonomy))) return 'MEDIUM';
+  // The user read the profile and typed it in: one source, but a person checked it.
+  if (agreeing.some((e) => e.sourceKind === 'user')) return 'MEDIUM';
   return 'LOW';
 }
 

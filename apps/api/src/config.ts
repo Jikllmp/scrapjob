@@ -26,7 +26,7 @@ export const ConfigSchema = z.object({
   SOURCE_FAILURE_THRESHOLD: int(3, 1),
   ENABLED_SOURCES: z
     .string()
-    .default('web-search,registry,job-board,company-site,linkedin-public,press-events')
+    .default('employer-list,web-search,registry,job-board,company-site,linkedin-public,press-events')
     .transform((v) =>
       v
         .split(',')

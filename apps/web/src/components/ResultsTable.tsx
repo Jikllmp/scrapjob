@@ -32,6 +32,7 @@ const sourceNames: Record<string, string> = {
   'company-site': 'Employer site',
   'linkedin-public': 'LinkedIn title',
   'web-search': 'Web search',
+  manual: 'Added by you',
 };
 
 function cityOf(r: ContactRowDto): string {

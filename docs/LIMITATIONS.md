@@ -13,7 +13,8 @@ numbers.
 
 | Source | What it gives | Contacts in the fixture search (5 in total) | Expected on the real web |
 | --- | --- | --- | --- |
-| `web-search` | Employers and job posts from Brave results | 0 people (it finds the 3 employers) | The backbone of discovery. Without it, no employer is found and the search stops at once. |
+| `employer-list` | Employers you list in `config/employers.yaml` | 0 people by design (it names employers) | As good as your list. The only discovery source without a key. People you add from LinkedIn are `MEDIUM`. |
+| `web-search` | Employers and job posts from Brave results | 0 people (it finds the 3 employers) | The backbone of discovery. Without it, only your employer list is searched. |
 | `linkedin-public` | Names and titles from LinkedIn results in Brave, never from linkedin.com | 3 (2 of them only here, so `LOW` leads) | The largest people source, and almost all `LOW`. Most of your 20 will be leads from here. |
 | `company-site` | Team, about, contact and careers pages, and ATS job pages | 2 (`VERIFIED`) | Few for medium and large employers, which rarely list recruiters. Small IT firms list founders and CTOs. |
 | `press-events` | Press releases and conference speaker pages naming a person with their employer | 1 (`MEDIUM`) | Low volume, good quality. Depends on what Brave indexes for the employer. |
@@ -30,7 +31,10 @@ contacts will be rare.
 - **Le Forem** open data (`odwb.be`): its `robots.txt` disallows `/api/` for every crawler except Googlebot (checked
   2026-10-10).
 - **VDAB**: needs a signed API agreement.
-- **LinkedIn pages**: never fetched. Only what Brave shows in its results is read.
+- **LinkedIn pages**: never fetched. Only what Brave shows in its results is read, and what you add by hand from a
+  people search you open yourself.
+- **OpenStreetMap**: the public Overpass API's `robots.txt` disallows `/api/` for every crawler (checked 2026-10-11).
+  Running your own Overpass instance or importing an extract would work but is not built.
 - **Google and Bing**: Bing's search APIs were retired and Google's Custom Search API is closed to new customers. SerpAPI
   was dropped because it scrapes Google results.
 - **Headless browsers**: none. Pages that need JavaScript to show their team list are read as empty.

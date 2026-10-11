@@ -1,4 +1,5 @@
 import {
+  AddContactResponse,
   ContactDetailDto,
   ContactListDto,
   CreateDeepSearchResponse,
@@ -6,9 +7,11 @@ import {
   CreateSearchResponse,
   Problem,
   SearchDto,
+  SearchCompanyListDto,
   SearchListDto,
   PrivacyDto,
   SourceListDto,
+  type AddContactBody,
   type CreateSearchBody,
 } from '@scrapjob/schema/api';
 import type { z } from 'zod';
@@ -67,6 +70,13 @@ export async function cancelSearch(id: string): Promise<void> {
 
 export const listContacts = (searchId: string) =>
   request(ContactListDto, `/api/searches/${encodeURIComponent(searchId)}/contacts?limit=200`);
+
+export const listCompanies = (searchId: string) =>
+  request(SearchCompanyListDto, `/api/searches/${encodeURIComponent(searchId)}/companies`);
+
+/** Adds a person the user found on LinkedIn to a finished search. */
+export const addContact = (searchId: string, body: AddContactBody) =>
+  request(AddContactResponse, `/api/searches/${encodeURIComponent(searchId)}/contacts`, { method: 'POST', body: JSON.stringify(body) });
 
 /** Builds the spreadsheet on the server (from the database) and starts the download. */
 export async function exportContacts(searchId: string, contactIds?: string[]): Promise<void> {

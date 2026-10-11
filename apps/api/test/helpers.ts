@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { SourceAdapter } from '@scrapjob/core';
+import type { Employer, SourceAdapter } from '@scrapjob/core';
 import { buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import type { Transport } from '../src/http/transport';
@@ -13,6 +13,7 @@ export const configDir = resolve(dirname(fileURLToPath(import.meta.url)), '../..
 export interface TestAppOptions {
   adapters?: readonly SourceAdapter[];
   transport?: Transport;
+  employers?: readonly Employer[];
 }
 
 export function testApp(env: Record<string, string> = {}, options: TestAppOptions | readonly SourceAdapter[] = {}): BuiltApp {
@@ -26,5 +27,6 @@ export function testApp(env: Record<string, string> = {}, options: TestAppOption
     clock: virtualClock(),
     ...(opts.adapters ? { adapters: opts.adapters } : {}),
     ...(opts.transport ? { transport: opts.transport } : {}),
+    employers: opts.employers ?? [],
   });
 }
