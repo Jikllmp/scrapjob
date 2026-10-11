@@ -26,7 +26,7 @@ export const ConfigSchema = z.object({
   SOURCE_FAILURE_THRESHOLD: int(3, 1),
   ENABLED_SOURCES: z
     .string()
-    .default('noop')
+    .default('web-search,company-site,linkedin-public')
     .transform((v) =>
       v
         .split(',')

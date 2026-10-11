@@ -1,0 +1,66 @@
+# Locations the query planner knows. A requested location matches an entry by
+# its name or any alias (case and accents ignored). `sections` are places that
+# are administratively part of the commune; they count as inside the area.
+# Unknown locations are searched as typed, with no expansion.
+countries:
+  BE:
+    name: { fr: Belgique, nl: België, en: Belgium }
+    languages: [fr, nl]
+    search_country: BE
+places:
+  - name: Charleroi
+    country: BE
+    province: Hainaut
+    region: Wallonie
+    languages: [fr]
+    aliases: [Charleroi]
+    sections: [Charleroi, Gosselies, Marcinelle, Jumet, Montignies-sur-Sambre, Gilly, Marchienne-au-Pont, Mont-sur-Marchienne, Couillet, Lodelinsart, Dampremy, Ransart, Roux, Monceau-sur-Sambre, Goutroux, Dampremy, Mont-sur-Marchienne]
+  - name: Mons
+    country: BE
+    province: Hainaut
+    region: Wallonie
+    languages: [fr]
+    aliases: [Mons, Bergen]
+    sections: [Mons, Jemappes, Cuesmes, Ghlin, Nimy, Havré, Obourg, Saint-Symphorien]
+  - name: Namur
+    country: BE
+    province: Namur
+    region: Wallonie
+    languages: [fr]
+    aliases: [Namur, Namen]
+    sections: [Namur, Jambes, Salzinnes, Saint-Servais, Bouge, Erpent, Wépion]
+  - name: Liège
+    country: BE
+    province: Liège
+    region: Wallonie
+    languages: [fr]
+    aliases: [Liège, Liege, Luik]
+    sections: [Liège, Angleur, Chênée, Grivegnée, Jupille-sur-Meuse, Wandre, Bressoux, Sclessin]
+  - name: Louvain-la-Neuve
+    country: BE
+    province: Brabant wallon
+    region: Wallonie
+    languages: [fr]
+    aliases: [Louvain-la-Neuve, Ottignies-Louvain-la-Neuve, LLN]
+    sections: [Louvain-la-Neuve, Ottignies, Limelette, Céroux-Mousty]
+  - name: Bruxelles
+    country: BE
+    province: Bruxelles-Capitale
+    region: Bruxelles
+    languages: [fr, nl]
+    aliases: [Bruxelles, Brussel, Brussels]
+    sections: [Bruxelles, Brussel, Brussels, Ixelles, Elsene, Etterbeek, Schaerbeek, Schaarbeek, Anderlecht, Saint-Gilles, Uccle, Ukkel, Woluwe-Saint-Lambert, Woluwe-Saint-Pierre, Evere, Forest, Vorst, Molenbeek, Laeken, Haren, Diegem]
+  - name: Antwerpen
+    country: BE
+    province: Antwerpen
+    region: Vlaanderen
+    languages: [nl]
+    aliases: [Antwerpen, Anvers, Antwerp]
+    sections: [Antwerpen, Berchem, Borgerhout, Deurne, Ekeren, Hoboken, Merksem, Wilrijk, Mortsel]
+  - name: Gent
+    country: BE
+    province: Oost-Vlaanderen
+    region: Vlaanderen
+    languages: [nl]
+    aliases: [Gent, Gand, Ghent]
+    sections: [Gent, Ledeberg, Gentbrugge, Sint-Amandsberg, Mariakerke, Zwijnaarde, Drongen]

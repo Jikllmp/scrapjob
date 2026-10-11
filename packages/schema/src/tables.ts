@@ -109,6 +109,8 @@ export const evidence = sqliteTable(
     sourceAdapter: text('source_adapter').notNull(),
     sourceUrl: text('source_url').notNull(),
     snippet: text('snippet').notNull(),
+    /** `page`: fetched by the adapter. `search_snippet`: seen only in a search result. */
+    sourceKind: text('source_kind', { enum: ['page', 'search_snippet'] }).notNull().default('page'),
     publishedAt: timestamp('published_at'),
     retrievedAt: timestamp('retrieved_at').notNull(),
   },

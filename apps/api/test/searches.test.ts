@@ -50,9 +50,9 @@ describe('search routes', () => {
       status: 'completed',
       stopReason: 'sources_exhausted',
     });
-    expect(search.counters.events).toBe(3);
     const types = built.ctx.events.listAfter(searchId).map((e) => e.type);
-    expect(types).toEqual(['SEARCH_STARTED', 'SOURCE_INITIALIZED', 'SEARCH_COMPLETED']);
+    expect(search.counters.events).toBe(types.length);
+    expect(types.filter((t) => t !== 'QUERY_PLANNED')).toEqual(['SEARCH_STARTED', 'SOURCE_INITIALIZED', 'SEARCH_COMPLETED']);
   });
 
   it('clamps targetCount to MAX_CONTACTS_PER_SEARCH', async () => {
@@ -136,9 +136,14 @@ describe('search routes', () => {
 describe('meta routes', () => {
   it('reports health and the source registry', async () => {
     built = testApp();
-    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.1.0' });
+    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.2.0' });
     expect((await built.app.inject({ url: '/api/sources' })).json()).toEqual({
-      items: [{ id: 'noop', displayName: 'No-op source', capabilities: ['companies'], enabled: true, available: true }],
+      items: [
+        { id: 'web-search', displayName: 'Web search (Brave)', capabilities: ['companies'], enabled: false, available: false },
+        { id: 'company-site', displayName: 'Employer websites', capabilities: ['people'], enabled: false, available: false },
+        { id: 'linkedin-public', displayName: 'LinkedIn titles (via web search)', capabilities: ['people'], enabled: false, available: false },
+        { id: 'noop', displayName: 'No-op source', capabilities: ['companies'], enabled: true, available: true },
+      ],
     });
   });
 });

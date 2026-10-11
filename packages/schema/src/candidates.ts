@@ -10,10 +10,20 @@ export const EvidenceRef = z.object({
   value: z.string().min(1),
   sourceUrl: url,
   snippet: z.string().min(1).max(500),
+  /** `page`: the adapter fetched the page itself. `search_snippet`: seen only in a search result. */
+  sourceKind: z.enum(['page', 'search_snippet']),
   retrievedAt: isoDate,
   publishedAt: isoDate.optional(),
 });
 export type EvidenceRef = z.infer<typeof EvidenceRef>;
+
+/** An open position seen while discovering a company. */
+export const PostingCandidate = z.object({
+  title: z.string().min(1),
+  url,
+  postedAt: isoDate.optional(),
+});
+export type PostingCandidate = z.infer<typeof PostingCandidate>;
 
 export const CompanyCandidate = z.object({
   name: z.string().min(1),
@@ -22,9 +32,11 @@ export const CompanyCandidate = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   isAgency: z.boolean().optional(),
+  postings: z.array(PostingCandidate).default([]),
   evidence: z.array(EvidenceRef).min(1),
 });
 export type CompanyCandidate = z.infer<typeof CompanyCandidate>;
+export type CompanyCandidateInput = z.input<typeof CompanyCandidate>;
 
 export const JobCandidate = z.object({
   companyName: z.string().min(1),
@@ -48,6 +60,8 @@ export const ContactCandidate = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   companyName: z.string().optional(),
+  /** Named as the contact person on a job posting (role tier 5 whatever the title). */
+  postingContact: z.boolean().optional(),
   evidence: z.array(EvidenceRef).min(1),
 });
 export type ContactCandidate = z.infer<typeof ContactCandidate>;

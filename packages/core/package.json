@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "@scrapjob/schema": "workspace:*",
+    "cheerio": "^1.1.2",
+    "domhandler": "^5.0.3",
+    "yaml": "^2.8.1",
     "zod": "^4.1.0"
   }
 }

@@ -11,6 +11,7 @@
   "dependencies": {
     "@scrapjob/schema": "workspace:*",
     "@tanstack/react-query": "^5.90.0",
+    "@tanstack/react-table": "^8.21.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.1.0"

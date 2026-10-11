@@ -1,0 +1,99 @@
+# Hiring-relevant role archetypes, best first (spec §5.3). A job title matches an
+# archetype when it contains one of its keywords (case and accents ignored).
+# `field` restricts an archetype to positions of that field; omit it to match all.
+# `generic: true` keywords match too broadly on their own and cost 10 points.
+archetypes:
+  - key: tech-recruiter
+    tier: 1
+    keywords:
+      - "it recruiter"
+      - "tech recruiter"
+      - "technical recruiter"
+      - "talent acquisition"
+      - "talent sourcer"
+      - "recruteur it"
+      - "recruteuse it"
+      - "recruteur informatique"
+      - "recruteuse informatique"
+      - "recruteur tech"
+      - "chargé de recrutement"
+      - "chargée de recrutement"
+      - "talent partner"
+      - "recruiter"
+      - "recruteur"
+      - "recruteuse"
+      - "rekruteerder"
+      - "recruitment consultant"
+  - key: hiring-manager
+    tier: 2
+    keywords:
+      - "engineering manager"
+      - "head of development"
+      - "head of engineering"
+      - "head of software"
+      - "development manager"
+      - "software development manager"
+      - "tech lead"
+      - "technical lead"
+      - "lead developer"
+      - "team lead"
+      - "teamleader"
+      - "teamleider"
+      - "responsable développement"
+      - "responsable du développement"
+      - "chef de projet it"
+      - "it manager"
+      - "responsable it"
+      - "responsable informatique"
+      - "directeur informatique"
+      - "head of it"
+  - key: hr
+    tier: 3
+    keywords:
+      - "hr business partner"
+      - "hrbp"
+      - "hr manager"
+      - "head of hr"
+      - "human resources"
+      - "people manager"
+      - "head of people"
+      - "people & culture"
+      - "responsable rh"
+      - "responsable des ressources humaines"
+      - "directeur rh"
+      - "directrice rh"
+      - "ressources humaines"
+      - "gestionnaire rh"
+      - "hr-manager"
+      - "personeelsverantwoordelijke"
+  - key: cto
+    tier: 4
+    keywords:
+      - "cto"
+      - "chief technology officer"
+      - "chief technical officer"
+      - "directeur technique"
+      - "directrice technique"
+      - "technisch directeur"
+      - "vp engineering"
+      - "vp of engineering"
+      - "cio"
+      - "chief information officer"
+    generic_keywords:
+      - "manager"
+      - "directeur"
+      - "director"
+      - "founder"
+      - "fondateur"
+      - "co-founder"
+      - "ceo"
+      - "gérant"
+      - "zaakvoerder"
+  # Tier 5 is also given to anyone named as the contact on a job posting,
+  # whatever their title.
+  - key: posting-contact
+    tier: 5
+    keywords:
+      - "contact person"
+      - "personne de contact"
+      - "contactpersoon"

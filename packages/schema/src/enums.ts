@@ -69,7 +69,7 @@ export const contactEvidenceFields = [
 ] as const;
 export const ContactEvidenceField = z.enum(contactEvidenceFields);
 
-export const companyEvidenceFields = ['name', 'website', 'domain', 'industry', 'generic_email'] as const;
+export const companyEvidenceFields = ['name', 'website', 'domain', 'city', 'industry', 'generic_email'] as const;
 export const CompanyEvidenceField = z.enum(companyEvidenceFields);
 
 export const EvidenceField = z.enum([...contactEvidenceFields, ...companyEvidenceFields]);

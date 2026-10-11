@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EventLevel, EventType, SearchStatus } from './enums';
+import { Confidence, EventLevel, EventType, SearchStatus } from './enums';
 
 export const BudgetSpent = z.object({
   httpRequests: z.number().int().nonnegative().default(0),
@@ -90,3 +90,64 @@ export const Problem = z.object({
   errors: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
 });
 export type Problem = z.infer<typeof Problem>;
+
+export const ContactRowDto = z.object({
+  id: z.string(),
+  fullName: z.string().nullable(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  title: z.string().nullable(),
+  department: z.string().nullable(),
+  roleTier: z.number().int().nullable(),
+  roleArchetype: z.string().nullable(),
+  company: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      website: z.string().nullable(),
+      domain: z.string().nullable(),
+      city: z.string().nullable(),
+      country: z.string().nullable(),
+      industry: z.string().nullable(),
+      isAgency: z.boolean(),
+    })
+    .nullable(),
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+  profileUrl: z.string().nullable(),
+  city: z.string().nullable(),
+  country: z.string().nullable(),
+  relevanceScore: z.number().int().nullable(),
+  relevanceReasons: z.array(z.string()),
+  confidence: Confidence,
+  /** Name or employer rests only on a search snippet: an unconfirmed lead (ADR 0002). */
+  lead: z.boolean(),
+  fieldConfidence: z.record(z.string(), Confidence),
+  possibleDuplicateOf: z.string().nullable(),
+  sources: z.array(z.string()),
+  primarySourceUrl: z.string().nullable(),
+  jobPostingUrl: z.string().nullable(),
+  collectedAt: z.string(),
+  notes: z.string().nullable(),
+});
+export type ContactRowDto = z.infer<typeof ContactRowDto>;
+
+export const ListContactsQuery = z.object({
+  q: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const ContactListDto = z.object({
+  items: z.array(ContactRowDto),
+  total: z.number().int(),
+  limit: z.number().int(),
+  offset: z.number().int(),
+});
+export type ContactListDto = z.infer<typeof ContactListDto>;
+
+export const CreateExportBody = z
+  .object({ contactIds: z.array(z.string().min(1).max(64)).min(1).max(500).optional() })
+  .default({});
+export const CreateExportResponse = z.object({ exportId: z.string(), filename: z.string(), rowCount: z.number().int() });
+export type CreateExportResponse = z.infer<typeof CreateExportResponse>;

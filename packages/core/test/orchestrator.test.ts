@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runSearch, sourceFailure, type OrchestratorOptions, type SourceAdapter } from '../src';
-import { RecordingSink, company, fakeAdapter } from './helpers';
+import { MemoryStore, RecordingSink, company, fakeAdapter, taxonomy } from './helpers';
 
 const request = { searchId: 's1', location: 'Charleroi', position: 'Développeur .NET', targetCount: 20 };
 const limits = { maxDurationMs: 60_000, maxHttpRequests: 300, maxSearchApiCalls: 40 };
@@ -12,6 +12,9 @@ function options(adapters: SourceAdapter[], overrides: Partial<OrchestratorOptio
     opts: {
       adapters,
       events,
+      store: new MemoryStore(),
+      taxonomy,
+      minRelevanceScore: 35,
       limits,
       sourceFailureThreshold: 3,
       signal: new AbortController().signal,
@@ -34,8 +37,9 @@ describe('runSearch', () => {
     const outcome = await runSearch(request, opts);
     expect(outcome.status).toBe('failed');
     expect(outcome.stopReason).toBe('no_source_available');
-    expect(outcome.message).toBe('0 / 20 contacts — stopped: no discovery-capable source is available');
+    expect(outcome.message).toBe('0 / 20 contacts — stopped: no company discovery source is available');
     expect(events.types()).toEqual(['SEARCH_STARTED', 'SOURCE_DISABLED']);
+    expect(events.events[1]?.message).toBe('down: not available');
   });
 
   it('ignores enrich-only adapters when deciding whether discovery is possible', async () => {

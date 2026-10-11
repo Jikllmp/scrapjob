@@ -1,0 +1,46 @@
+# Position synonyms used by the query planner. Deterministic: no LLM.
+# A position matches an entry when it contains one of the entry's `match`
+# strings (case and accents ignored). `field` feeds the sector score later.
+positions:
+  - key: dotnet-developer
+    field: software
+    match: [".net", "c#", "csharp", "dotnet", "asp.net"]
+    synonyms:
+      en: [".NET Developer", "C# Developer", "Software Engineer .NET", "Backend Developer C#"]
+      fr: ["Développeur .NET", "Développeur C#", "Ingénieur logiciel .NET"]
+      nl: [".NET Ontwikkelaar", "C# Developer"]
+  - key: java-developer
+    field: software
+    match: ["java", "spring boot", "kotlin"]
+    synonyms:
+      en: ["Java Developer", "Backend Developer Java", "Software Engineer Java"]
+      fr: ["Développeur Java", "Ingénieur logiciel Java"]
+      nl: ["Java Ontwikkelaar"]
+  - key: web-developer
+    field: software
+    match: ["javascript", "typescript", "react", "angular", "vue", "front-end", "frontend", "full stack", "fullstack", "web developer", "développeur web"]
+    synonyms:
+      en: ["Full Stack Developer", "Front-end Developer", "Web Developer"]
+      fr: ["Développeur web", "Développeur full stack", "Développeur front-end"]
+      nl: ["Webontwikkelaar", "Full Stack Developer"]
+  - key: data
+    field: software
+    match: ["data engineer", "data analyst", "data scientist", "bi developer", "power bi"]
+    synonyms:
+      en: ["Data Engineer", "Data Analyst", "BI Developer"]
+      fr: ["Ingénieur data", "Analyste de données", "Développeur BI"]
+      nl: ["Data Engineer", "Data-analist"]
+  - key: software-developer
+    field: software
+    match: ["developer", "développeur", "developpeur", "ontwikkelaar", "programmeur", "software engineer", "ingénieur logiciel"]
+    synonyms:
+      en: ["Software Developer", "Software Engineer"]
+      fr: ["Développeur", "Ingénieur logiciel"]
+      nl: ["Software Ontwikkelaar"]
+  - key: mechanical-engineer
+    field: engineering
+    match: ["mechanical engineer", "ingénieur mécanique", "ingenieur mecanique", "werktuigkundig"]
+    synonyms:
+      en: ["Mechanical Engineer", "Design Engineer"]
+      fr: ["Ingénieur mécanique", "Ingénieur conception"]
+      nl: ["Werktuigkundig Ingenieur"]

@@ -15,6 +15,13 @@
       "when": 1791493961845,
       "tag": "0001_evidence_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791502869479,
+      "tag": "0002_evidence_source_kind",
+      "breakpoints": true
     }
   ]
 }

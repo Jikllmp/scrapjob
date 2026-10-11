@@ -1,7 +1,8 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
-import { buildApp } from './app';
+import { TaxonomyError } from '@scrapjob/core';
+import { buildApp, type BuiltApp } from './app';
 import { ConfigError, databasePath, loadConfig } from './config';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -20,7 +21,21 @@ function main(): void {
   }
 
   const dbPath = resolve(repoRoot, databasePath(config.DATABASE_URL));
-  const { app, ctx } = buildApp(config, { databasePath: dbPath });
+  let built: BuiltApp;
+  try {
+    built = buildApp(config, {
+      databasePath: dbPath,
+      configDir: resolve(repoRoot, 'config'),
+      exportDir: resolve(repoRoot, config.EXPORT_DIR),
+    });
+  } catch (err) {
+    if (err instanceof TaxonomyError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
+  }
+  const { app, ctx } = built;
   const resumed = ctx.runner.resumeInterrupted();
   if (resumed > 0) app.log.info({ resumed }, 'resumed interrupted searches');
 

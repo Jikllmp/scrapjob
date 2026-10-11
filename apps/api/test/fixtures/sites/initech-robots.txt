@@ -1,0 +1,3 @@
+# fixture: synthetic robots.txt for https://www.initech.test/robots.txt, written 2026-10-08
+User-agent: *
+Disallow: /

@@ -1,0 +1,17 @@
+{
+  "_fixture": "Synthetic Brave Search API response, written 2026-10-08, for the LinkedIn-title query about \"Initech\"",
+  "web": {
+    "results": [
+      {
+        "title": "Hugo Lambert - HR Business Partner - Initech | LinkedIn",
+        "url": "https://be.linkedin.com/in/hugo-lambert-hr",
+        "description": "Marcinelle, Wallonie, Belgique · HR Business Partner chez Initech."
+      },
+      {
+        "title": "Claire Moreau - Recruteuse IT - Globex IT | LinkedIn",
+        "url": "https://be.linkedin.com/in/claire-moreau",
+        "description": "Ancienne stagiaire chez Initech. Recruteuse IT chez Globex IT."
+      }
+    ]
+  }
+}

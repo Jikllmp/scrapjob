@@ -1,6 +1,6 @@
 import { eq, inArray } from 'drizzle-orm';
 import { tables } from '@scrapjob/schema';
-import { runSearch, type AdapterRegistry, type SearchOutcome } from '@scrapjob/core';
+import { runSearch, type AdapterRegistry, type PipelineStore, type SearchOutcome, type Taxonomy } from '@scrapjob/core';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/client';
@@ -21,6 +21,8 @@ export class SearchRunner {
     private readonly db: Db,
     private readonly events: EventStore,
     private readonly registry: AdapterRegistry,
+    private readonly store: PipelineStore,
+    private readonly taxonomy: Taxonomy,
     private readonly config: Config,
     private readonly log: FastifyBaseLogger,
   ) {}
@@ -64,6 +66,7 @@ export class SearchRunner {
       stopReason: 'cancelled',
       message: 'Cancelled before it started',
       validatedContacts: 0,
+      leads: 0,
       companies: 0,
       budgetSpent: { httpRequests: 0, searchApiCalls: 0, deepSearchRequests: 0, elapsedMs: 0 },
     });
@@ -109,6 +112,9 @@ export class SearchRunner {
         {
           adapters: this.registry.enabled(),
           events: this.events.sinkFor(searchId),
+          store: this.store,
+          taxonomy: this.taxonomy,
+          minRelevanceScore: this.config.MIN_RELEVANCE_SCORE,
           limits: {
             maxDurationMs: this.config.MAX_SEARCH_DURATION_MS,
             maxHttpRequests: this.config.MAX_HTTP_REQUESTS,
@@ -154,6 +160,7 @@ export class SearchRunner {
     this.events.append(searchId, type, level, outcome.message, {
       stopReason: outcome.stopReason,
       validatedContacts: outcome.validatedContacts,
+      leads: outcome.leads,
       companies: outcome.companies,
       budgetSpent: outcome.budgetSpent,
     });
