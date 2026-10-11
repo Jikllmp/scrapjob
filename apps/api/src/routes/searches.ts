@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { count, desc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { tables } from '@scrapjob/schema';
@@ -13,7 +14,7 @@ import {
 import type { AppContext } from '../context';
 import { HttpProblem, parseOr400 } from '../problem';
 
-const { searches, searchEvents, contacts, companies } = tables;
+const { searches, searchEvents, contacts, companies, exports } = tables;
 
 type SearchRow = typeof searches.$inferSelect;
 
@@ -79,7 +80,10 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
       runner.cancel(id);
       return reply.status(202).send();
     }
+    // The spreadsheets go with the search: they hold the same personal data.
+    const files = db.select({ path: exports.path }).from(exports).where(eq(exports.searchId, id)).all();
     db.delete(searches).where(eq(searches.id, id)).run();
+    for (const f of files) rmSync(f.path, { force: true });
     return reply.status(204).send();
   });
 }

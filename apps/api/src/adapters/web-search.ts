@@ -1,12 +1,22 @@
 import {
   clip,
   containsPhrase,
+  normaliseName,
   registrableDomain,
+  snippetAround,
+  type EnrichTarget,
   type SearchContext,
   type SourceAdapter,
 } from '@scrapjob/core';
-import type { CompanyCandidateInput, EvidenceRef } from '@scrapjob/schema';
+import type { CompanyCandidateInput, EnrichResultInput, EvidencePatch, EvidenceRef, PostingCandidate } from '@scrapjob/schema';
+import type { HttpClient } from '../http/client';
 import type { BraveSearch, SearchResult } from '../search/brave';
+import { fetchPage } from './pages';
+
+/** Pages a deep search reads from the person's search results. */
+const ENRICH_PAGES = 3;
+/** How close the employer must be to the person's name in running text: about two sentences. */
+const PASSAGE = 240;
 
 const postingPath = /\/(jobs?|emplois?|offres?|vacatures?|careers?|carrieres?|carrières|vacancies|o|position|postes?)\b/i;
 const genericSegments = /^(jobs?|emplois?|carri[eè]res?|careers?|vacatures?|recrutement|accueil|home|contact|offres? d['’]emploi)$/i;
@@ -38,9 +48,12 @@ function companyName(result: SearchResult, host: string, text: string): string {
 export class WebSearchAdapter implements SourceAdapter {
   readonly id = 'web-search';
   readonly displayName = 'Web search (Brave)';
-  readonly capabilities = new Set(['companies'] as const);
+  readonly capabilities = new Set(['companies', 'enrich'] as const);
 
-  constructor(private readonly search: BraveSearch) {}
+  constructor(
+    private readonly search: BraveSearch,
+    private readonly http: HttpClient,
+  ) {}
 
   async isAvailable(): Promise<boolean> {
     return this.search.configured;
@@ -121,7 +134,64 @@ export class WebSearchAdapter implements SourceAdapter {
 
   async *discoverPeople() {}
 
-  async enrich() {
-    return [];
+  /**
+   * Deep search: looks the person up by name and employer, then reads the
+   * pages that come back (press, conference, partner sites). A page counts only
+   * if the person's name and the employer appear in the same passage.
+   */
+  async enrich(ctx: SearchContext, target: EnrichTarget): Promise<EnrichResultInput> {
+    const name = target.fields.full_name;
+    const company = target.company;
+    if (!name || !company || ctx.shouldStop()) return {};
+    const text = `"${name}" "${company.name}"`;
+    ctx.events.emit('QUERY_STARTED', 'info', text, { adapter: this.id });
+    const results = await this.search.search(
+      { text, lang: ctx.plan.location.languages[0] ?? 'fr', country: ctx.plan.location.countryCode },
+      ctx,
+      this.id,
+    );
+    const { aggregators } = ctx.taxonomy.hosts;
+    const urls = results.map((r) => r.url).filter((u) => !aggregators.includes(registrableDomain(u))).slice(0, ENRICH_PAGES);
+    const patches: EvidencePatch[] = [];
+    const postings: PostingCandidate[] = [];
+    let confirming = 0;
+    for (const url of urls) {
+      if (ctx.shouldStop()) break;
+      const page = await fetchPage(this.http, this.id, url, ctx);
+      if (!page) continue;
+      const person = page.people.find((p) => normaliseName(p.fullName) === normaliseName(name));
+      // Their card names the employer, or the employer is named within a sentence or two of them.
+      const passage = person && containsPhrase(person.nameSnippet, company.name) ? person.nameSnippet : snippetAround(page.text, name, PASSAGE);
+      if (!passage || !containsPhrase(passage, company.name)) continue;
+      confirming += 1;
+      const retrievedAt = new Date().toISOString();
+      const ev = (field: EvidenceRef['field'], value: string, snippet: string): EvidencePatch => ({
+        field,
+        evidence: {
+          field,
+          value,
+          sourceUrl: page.url,
+          snippet,
+          sourceKind: 'page',
+          retrievedAt,
+          ...(page.publishedAt ? { publishedAt: page.publishedAt } : {}),
+        },
+      });
+      patches.push(ev('full_name', name, passage), ev('company', company.name, snippetAround(passage, company.name) ?? passage));
+      if (person?.title && person.titleSnippet) patches.push(ev('title', person.title, person.titleSnippet));
+      // Only a work address on the employer's own domain: a personal address is never collected (spec §2.2).
+      const workDomain = company.domain ? registrableDomain(company.domain) : null;
+      if (person?.email && person.emailSnippet && workDomain && registrableDomain(person.email.split('@')[1] ?? '') === workDomain) {
+        patches.push(ev('email', person.email, person.emailSnippet));
+      }
+      for (const job of page.jobPostings) {
+        if (ctx.plan.positionTerms.some((t) => containsPhrase(job.title, t))) postings.push({ title: job.title, url: page.url });
+      }
+    }
+    ctx.events.emit('QUERY_COMPLETED', 'info', `${results.length} results, ${confirming} pages name ${name} with ${company.name}`, {
+      adapter: this.id,
+      results: results.length,
+    });
+    return { patches, postings };
   }
 }

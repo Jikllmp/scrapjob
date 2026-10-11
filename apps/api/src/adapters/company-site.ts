@@ -1,15 +1,17 @@
 import {
-  parsePage,
+  containsPhrase,
+  normaliseName,
   registrableDomain,
   sameEmployer,
   snippetAround,
-  SourceFailure,
+  type EnrichTarget,
   type ParsedPage,
   type SearchContext,
   type SourceAdapter,
 } from '@scrapjob/core';
-import type { Company, ContactCandidate, EvidenceRef } from '@scrapjob/schema';
+import type { Company, ContactCandidate, EnrichResultInput, EvidencePatch, EvidenceRef, PostingCandidate } from '@scrapjob/schema';
 import type { HttpClient } from '../http/client';
+import { fetchPage } from './pages';
 
 const MAX_PAGES = 4;
 
@@ -34,7 +36,7 @@ function rankLink(href: string, text: string): number | null {
 export class CompanySiteAdapter implements SourceAdapter {
   readonly id = 'company-site';
   readonly displayName = 'Employer websites';
-  readonly capabilities = new Set(['people'] as const);
+  readonly capabilities = new Set(['people', 'enrich'] as const);
 
   constructor(private readonly http: HttpClient) {}
 
@@ -51,9 +53,41 @@ export class CompanySiteAdapter implements SourceAdapter {
   async *discoverJobs() {}
 
   async *discoverPeople(ctx: SearchContext, company: Company): AsyncIterable<ContactCandidate> {
-    if (!company.website || ctx.shouldStop()) return;
-    const home = await this.fetchPage(new URL(company.website).toString(), ctx);
-    if (!home) return;
+    for (const page of await this.employerPages(ctx, company)) {
+      for (const candidate of this.candidates(page, company)) yield candidate;
+    }
+  }
+
+  /**
+   * Deep search: re-reads the employer's pages to confirm the person still
+   * appears there with that title, and picks up a published email and a
+   * posting for the position.
+   */
+  async enrich(ctx: SearchContext, target: EnrichTarget): Promise<EnrichResultInput> {
+    const { company } = target;
+    const name = target.fields.full_name;
+    if (!company || !name) return {};
+    const patches: EvidencePatch[] = [];
+    const postings: PostingCandidate[] = [];
+    for (const page of await this.employerPages(ctx, company)) {
+      for (const candidate of this.candidates(page, company)) {
+        if (normaliseName(candidate.fullName) !== normaliseName(name)) continue;
+        for (const evidence of candidate.evidence) patches.push({ field: evidence.field, evidence });
+      }
+      for (const job of page.jobPostings) {
+        if (ctx.plan.positionTerms.some((t) => containsPhrase(job.title, t))) {
+          postings.push({ title: job.title, url: page.url, ...(job.datePosted ? { postedAt: job.datePosted } : {}) });
+        }
+      }
+    }
+    return { patches, postings };
+  }
+
+  /** The home page, then up to four team, about, careers or contact pages it links to. */
+  private async employerPages(ctx: SearchContext, company: Company): Promise<ParsedPage[]> {
+    if (!company.website || ctx.shouldStop()) return [];
+    const home = await fetchPage(this.http, this.id, new URL(company.website).toString(), ctx);
+    if (!home) return [];
     const pages: ParsedPage[] = [home];
     const allowed = new Set([registrableDomain(home.url), ...ctx.taxonomy.hosts.ats]);
     const ranked = home.links
@@ -62,40 +96,12 @@ export class CompanySiteAdapter implements SourceAdapter {
       .filter((l): l is { href: string; rank: number } => l.rank !== null)
       .sort((a, b) => a.rank - b.rank);
     const targets = [...new Set(ranked.map((l) => l.href))].slice(0, MAX_PAGES);
-
     for (const href of targets) {
       if (ctx.shouldStop()) break;
-      const page = await this.fetchPage(href, ctx);
+      const page = await fetchPage(this.http, this.id, href, ctx);
       if (page) pages.push(page);
     }
-    for (const page of pages) {
-      for (const candidate of this.candidates(page, company)) yield candidate;
-    }
-  }
-
-  async enrich() {
-    return [];
-  }
-
-  /** Fetches and parses one page; a page that is missing, disallowed or not HTML is skipped, not a failure. */
-  private async fetchPage(url: string, ctx: SearchContext): Promise<ParsedPage | null> {
-    try {
-      const res = await this.http.get(url, { adapter: this.id, ctx, headers: { accept: 'text/html' } });
-      const type = res.headers['content-type'] ?? 'text/html';
-      if (res.status !== 200 || !type.includes('html')) return null;
-      const page = parsePage(res.body, res.url, ctx.taxonomy);
-      if (page.noindex) {
-        ctx.events.emit('ROBOTS_DISALLOWED', 'info', `${res.url} asks not to be indexed (meta robots)`, {
-          adapter: this.id,
-          url: res.url,
-        });
-        return null;
-      }
-      return page;
-    } catch (err) {
-      if (err instanceof SourceFailure && err.error.kind === 'RobotsDisallowed') return null;
-      throw err;
-    }
+    return pages;
   }
 
   private *candidates(page: ParsedPage, company: Company): Iterable<ContactCandidate> {

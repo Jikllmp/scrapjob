@@ -1,0 +1,9 @@
+# Which employer activities count as "the position's field" for the +10 sector
+# score (spec §5.4). Keys are the `field` values in synonyms.yaml; values are
+# NACE-BEL 2008/2025 code prefixes, as published in the KBO/BCE register.
+# A prefix matches on whole digits: "62" matches 62.010 and 62.090.
+fields:
+  software:
+    nace: ["58.2", "62", "63.1"]
+  engineering:
+    nace: ["62", "71.1", "71.2", "72.1"]

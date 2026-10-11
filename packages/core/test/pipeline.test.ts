@@ -173,3 +173,78 @@ describe('contact pipeline', () => {
     expect((await runSearch(request, opts)).stopReason).toBe('no_source_available');
   });
 });
+
+describe('employer facts before people', () => {
+  const quiet = (...names: string[]) =>
+    fakeAdapter({
+      id: 'discovery',
+      companies: async function* () {
+        for (const n of names) yield company(n, { city: 'Charleroi' });
+      },
+    });
+  const marie = people('company-site', { Acme: [teamPagePerson('Acme', 'Marie Dupont', 'Talent Acquisition Manager')] });
+
+  it('scores the sector from the register before scoring people', async () => {
+    const registry = fakeAdapter({
+      id: 'registry',
+      capabilities: ['enrich'],
+      enrichCompany: async (c) => ({
+        registryId: '0123.456.789',
+        naceCode: '62.010',
+        industry: 'Programmation informatique',
+        evidence: [
+          {
+            field: 'industry',
+            value: 'Programmation informatique',
+            sourceUrl: 'https://kbopub.economie.fgov.be/kbopub/toonondernemingps.html?ondernemingsnummer=0123456789',
+            snippet: `0123.456.789 ${c.name} — NACE 62.010 Programmation informatique`,
+            sourceKind: 'dataset',
+            retrievedAt: T,
+          },
+        ],
+      }),
+    });
+    const { events, store, opts } = setup([quiet('Acme'), registry, marie]);
+    await runSearch(request, opts);
+    const [saved] = [...store.contacts.values()];
+    expect(saved?.score.reasons).toContain("+10 employer's sector matches the position");
+    expect(events.ofType('ENRICHMENT_COMPLETED')[0]?.message).toBe('Acme: Programmation informatique');
+  });
+
+  it('ignores register facts that have no supporting snippet', async () => {
+    const liar = fakeAdapter({
+      id: 'registry',
+      capabilities: ['enrich'],
+      enrichCompany: async () => ({
+        naceCode: '62.010',
+        evidence: [{ field: 'industry', value: 'Software', sourceUrl: 'https://x.test/', snippet: 'nothing here', sourceKind: 'dataset', retrievedAt: T }],
+      }),
+    });
+    const { events, store, opts } = setup([quiet('Acme'), liar, marie]);
+    await runSearch(request, opts);
+    expect([...store.contacts.values()][0]?.score.reasons.join(' ')).not.toContain('sector');
+    expect(events.ofType('EXTRACTION_REJECTED')).toHaveLength(1);
+  });
+
+  it('counts a matching posting from a job feed, and ignores postings for other jobs', async () => {
+    const feed = (title: string) =>
+      fakeAdapter({
+        id: 'job-board',
+        capabilities: ['jobs'],
+        jobs: async function* (c: Company) {
+          const url = `https://acme.recruitee.test/o/${title.toLowerCase().replace(/\W+/g, '-')}`;
+          yield { companyName: c.name, title, url, evidence: [{ field: 'name', value: c.name, sourceUrl: url, snippet: `${title} — ${c.name}`, sourceKind: 'page', retrievedAt: T }] };
+        },
+      });
+    const withPosting = setup([quiet('Acme'), feed('Développeur .NET senior'), marie]);
+    await runSearch(request, withPosting.opts);
+    expect([...withPosting.store.contacts.values()][0]?.score.reasons).toContain('+20 employer has an open posting for this position');
+    expect(withPosting.store.jobs).toHaveLength(1);
+    expect(withPosting.events.ofType('JOB_DISCOVERED')[0]?.message).toBe('Développeur .NET senior — Acme');
+
+    const other = setup([quiet('Acme'), feed('Comptable'), marie]);
+    await runSearch(request, other.opts);
+    expect([...other.store.contacts.values()][0]?.score.reasons.join(' ')).not.toContain('posting');
+    expect(other.store.jobs).toHaveLength(0);
+  });
+});

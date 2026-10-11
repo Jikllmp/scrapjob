@@ -10,5 +10,6 @@ export function loadTaxonomy(configDir: string): Taxonomy {
     roles: read('roles.yaml'),
     locations: read('locations.yaml'),
     hosts: read('hosts.yaml'),
+    sectors: read('sectors.yaml'),
   });
 }

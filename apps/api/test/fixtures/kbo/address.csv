@@ -1,0 +1,4 @@
+"EntityNumber","TypeOfAddress","CountryNL","CountryFR","Zipcode","MunicipalityNL","MunicipalityFR","StreetNL","StreetFR","HouseNumber","Box","ExtraAddressInfo","DateStrikingOff"
+"0999.000.101","REGO","","","6041","Charleroi","Charleroi","","Rue de l'Aéropole","1","","",""
+"0999.000.202","REGO","","","6001","Charleroi","Charleroi","","Rue de la Station","10","","",""
+"0999.000.303","REGO","","","9000","Gent","Gand","Korenmarkt","","5","","",""

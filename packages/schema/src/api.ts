@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Confidence, EventLevel, EventType, SearchStatus } from './enums';
+import { Confidence, DeepSearchStatus, EventLevel, EventType, EvidenceSourceKind, SearchStatus } from './enums';
 
 export const BudgetSpent = z.object({
   httpRequests: z.number().int().nonnegative().default(0),
@@ -75,8 +75,23 @@ export const SourceDto = z.object({
   capabilities: z.array(SourceCapability),
   enabled: z.boolean(),
   available: z.boolean(),
+  /** Why it is not available, when it is not. */
+  unavailableReason: z.string().nullable(),
+  /** Contacts that carry at least one piece of evidence from this source, across all searches. */
+  contacts: z.number().int(),
+  /** How the source behaved in the most recent search that ran. */
+  lastSearch: z
+    .object({
+      searchId: z.string(),
+      createdAt: z.string(),
+      failures: z.number().int(),
+      disabled: z.boolean(),
+      lastError: z.string().nullable(),
+    })
+    .nullable(),
 });
 export type SourceDto = z.infer<typeof SourceDto>;
+export const SourceListDto = z.object({ items: z.array(SourceDto) });
 
 export const HealthDto = z.object({ status: z.literal('ok'), version: z.string() });
 
@@ -124,6 +139,8 @@ export const ContactRowDto = z.object({
   lead: z.boolean(),
   fieldConfidence: z.record(z.string(), Confidence),
   possibleDuplicateOf: z.string().nullable(),
+  /** Fields a deep search found evidence against (spec §8.2): shown as UNKNOWN until the user decides. */
+  contradicted: z.array(z.string()),
   sources: z.array(z.string()),
   primarySourceUrl: z.string().nullable(),
   jobPostingUrl: z.string().nullable(),
@@ -151,3 +168,63 @@ export const CreateExportBody = z
   .default({});
 export const CreateExportResponse = z.object({ exportId: z.string(), filename: z.string(), rowCount: z.number().int() });
 export type CreateExportResponse = z.infer<typeof CreateExportResponse>;
+
+export const ContactIdParams = z.object({ id: z.string().min(1).max(64) });
+
+export const EvidenceDto = z.object({
+  id: z.string(),
+  field: z.string(),
+  value: z.string(),
+  sourceAdapter: z.string(),
+  sourceUrl: z.string(),
+  snippet: z.string(),
+  sourceKind: EvidenceSourceKind,
+  publishedAt: z.string().nullable(),
+  retrievedAt: z.string(),
+});
+export type EvidenceDto = z.infer<typeof EvidenceDto>;
+
+export const ContactSnapshotDto = z.object({
+  fields: z.record(z.string(), z.object({ value: z.string(), confidence: Confidence })),
+  score: z.number().int(),
+  confidence: Confidence,
+  lead: z.boolean(),
+});
+export type ContactSnapshotDto = z.infer<typeof ContactSnapshotDto>;
+
+export const FieldChangeDto = z.object({
+  field: z.string(),
+  kind: z.enum(['added', 'updated', 'corroborated', 'contradicted']),
+  before: z.string().nullable(),
+  after: z.string().nullable(),
+  confidenceBefore: Confidence,
+  confidenceAfter: Confidence,
+});
+export type FieldChangeDto = z.infer<typeof FieldChangeDto>;
+
+export const DeepSearchDto = z.object({
+  id: z.string(),
+  status: DeepSearchStatus,
+  message: z.string().nullable(),
+  requestsSpent: z.number().int(),
+  createdAt: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  before: ContactSnapshotDto.nullable(),
+  after: ContactSnapshotDto.nullable(),
+  changes: z.array(FieldChangeDto),
+});
+export type DeepSearchDto = z.infer<typeof DeepSearchDto>;
+
+export const ContactDetailDto = ContactRowDto.extend({
+  search: z.object({ id: z.string(), location: z.string(), position: z.string() }),
+  /** Field name → flags such as `contradicted`. */
+  fieldFlags: z.record(z.string(), z.array(z.string())),
+  evidence: z.array(EvidenceDto),
+  companyEvidence: z.array(EvidenceDto),
+  deepSearches: z.array(DeepSearchDto),
+});
+export type ContactDetailDto = z.infer<typeof ContactDetailDto>;
+
+export const CreateDeepSearchResponse = z.object({ deepSearchId: z.string() });
+export type CreateDeepSearchResponse = z.infer<typeof CreateDeepSearchResponse>;

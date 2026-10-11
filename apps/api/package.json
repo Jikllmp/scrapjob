@@ -7,6 +7,7 @@
     "dev": "tsx watch --clear-screen=false src/server.ts",
     "start": "tsx src/server.ts",
     "demo": "tsx scripts/demo-server.ts",
+    "registry:import": "tsx scripts/registry-import.ts",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate"
   },

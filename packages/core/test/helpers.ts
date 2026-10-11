@@ -3,7 +3,9 @@ import type {
   Company,
   CompanyCandidate,
   CompanyCandidateInput,
+  CompanyPatch,
   ContactCandidate,
+  JobCandidate,
   EventLevel,
   EventType,
   SourceCapability,
@@ -11,10 +13,11 @@ import type {
 import hosts from '../../../config/hosts.yaml?raw';
 import locations from '../../../config/locations.yaml?raw';
 import roles from '../../../config/roles.yaml?raw';
+import sectors from '../../../config/sectors.yaml?raw';
 import synonyms from '../../../config/synonyms.yaml?raw';
-import { parseTaxonomy, type EventSink, type PipelineStore, type ScoredDraft, type SourceAdapter } from '../src';
+import { parseTaxonomy, type EnrichTarget, type EventSink, type PipelineStore, type ScoredDraft, type SourceAdapter } from '../src';
 
-export const taxonomy = parseTaxonomy({ synonyms, roles, locations, hosts });
+export const taxonomy = parseTaxonomy({ synonyms, roles, locations, hosts, sectors });
 
 export interface RecordedEvent {
   type: EventType;
@@ -45,6 +48,7 @@ export class MemoryStore implements PipelineStore {
   readonly contacts = new Map<string, ScoredDraft>();
   readonly flagged: [string, string][] = [];
   readonly blocked = new Set<string>();
+  readonly jobs: JobCandidate[] = [];
 
   upsertCompany(candidate: CompanyCandidate): Company {
     const existing = [...this.companies.values()].find(
@@ -62,6 +66,7 @@ export class MemoryStore implements PipelineStore {
       industry: null,
       sizeBucket: null,
       registryId: null,
+      naceCode: null,
       isAgency: candidate.isAgency ?? false,
       genericEmail: null,
     };
@@ -71,6 +76,18 @@ export class MemoryStore implements PipelineStore {
 
   savePostings(_company: Company, candidate: CompanyCandidate): number {
     return candidate.postings.length;
+  }
+
+  saveJob(_company: Company, job: JobCandidate): boolean {
+    if (this.jobs.some((j) => j.url === job.url)) return false;
+    this.jobs.push(job);
+    return true;
+  }
+
+  applyCompanyPatch(company: Company, patch: CompanyPatch): Company {
+    const updated = { ...company, ...(patch.registryId ? { registryId: patch.registryId } : {}), ...(patch.industry ? { industry: patch.industry } : {}), ...(patch.naceCode ? { naceCode: patch.naceCode } : {}) };
+    this.companies.set(company.id, updated);
+    return updated;
   }
 
   isBlocked(normalisedName: string): boolean {
@@ -141,6 +158,9 @@ interface FakeAdapterOptions {
   available?: boolean | (() => Promise<boolean>);
   companies?: () => AsyncIterable<unknown>;
   people?: (company: Company) => AsyncIterable<unknown>;
+  jobs?: (company: Company) => AsyncIterable<unknown>;
+  enrich?: (target: EnrichTarget) => Promise<unknown>;
+  enrichCompany?: (company: Company) => Promise<unknown>;
 }
 
 export function fakeAdapter(options: FakeAdapterOptions): SourceAdapter {
@@ -152,8 +172,11 @@ export function fakeAdapter(options: FakeAdapterOptions): SourceAdapter {
     capabilities: new Set(options.capabilities ?? ['companies']),
     isAvailable: typeof available === 'function' ? available : async () => available,
     discoverCompanies: (options.companies ?? empty) as SourceAdapter['discoverCompanies'],
-    discoverJobs: empty,
+    discoverJobs: ((_ctx: unknown, c: Company) => (options.jobs ?? empty)(c)) as SourceAdapter['discoverJobs'],
     discoverPeople: ((_ctx: unknown, c: Company) => (options.people ?? empty)(c)) as SourceAdapter['discoverPeople'],
-    enrich: async () => [],
+    enrich: (async (_ctx: unknown, t: EnrichTarget) => (options.enrich ? options.enrich(t) : {})) as SourceAdapter['enrich'],
+    ...(options.enrichCompany
+      ? { enrichCompany: ((_ctx: unknown, c: Company) => options.enrichCompany!(c)) as NonNullable<SourceAdapter['enrichCompany']> }
+      : {}),
   };
 }

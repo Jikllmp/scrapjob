@@ -19,12 +19,19 @@ const sites: Record<string, { file: string; headers: Record<string, string> }> =
   'https://globex-it.recruitee.com/': { file: 'sites/globex-home.html', headers: html },
   'https://globex-it.recruitee.com/o/developpeur-net': { file: 'sites/globex-job.html', headers: html },
   'https://www.initech.test/robots.txt': { file: 'sites/initech-robots.txt', headers: text },
+  'https://globex-it.recruitee.com/api/offers/': { file: 'feeds/globex-offers.json', headers: json },
+  'https://www.devday-charleroi.test/speakers': { file: 'sites/devday-speakers.html', headers: html },
+  'https://www.charleroi-tech.test/2026/acme-ouvre-gosselies': { file: 'sites/charleroi-tech-acme.html', headers: html },
+  'https://www.hainaut-business.test/portraits/hugo-lambert': { file: 'sites/hainaut-business-hugo.html', headers: html },
 };
 
 function braveFixture(q: string): string {
   if (q === '"Développeur .NET" Charleroi emploi') return 'brave/dotnet-charleroi-emploi.json';
   if (q.startsWith('site:linkedin.com/in "Acme Software"')) return 'brave/linkedin-acme.json';
   if (q.startsWith('site:linkedin.com/in "Initech"')) return 'brave/linkedin-initech.json';
+  if (q.startsWith('"Initech" (speaker')) return 'brave/press-initech.json';
+  if (q === '"Paul Martin" "Acme Software"') return 'brave/person-paul-martin.json';
+  if (q === '"Hugo Lambert" "Initech"') return 'brave/person-hugo-lambert.json';
   return 'brave/empty.json';
 }
 

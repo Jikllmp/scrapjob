@@ -12,5 +12,5 @@ export const noopAdapter: SourceAdapter = {
   discoverCompanies: async function* () {},
   discoverJobs: async function* () {},
   discoverPeople: async function* () {},
-  enrich: async () => [],
+  enrich: async () => ({}),
 };
