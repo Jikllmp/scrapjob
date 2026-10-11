@@ -120,6 +120,7 @@ export class DeepSearchRunner {
           draft: stored.draft,
           company: stored.company,
           hasPosting: stored.hasPosting,
+          previousScore: stored.score,
         },
         {
           adapters: this.registry.enabled(),

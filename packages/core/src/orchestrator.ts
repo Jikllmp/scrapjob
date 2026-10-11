@@ -33,11 +33,12 @@ export interface OrchestratorOptions {
   signal: AbortSignal;
   now?: () => number;
   /**
-   * Contacts already stored for this search, when it resumes after a restart.
-   * They count toward the target and new sightings merge into them instead of
-   * becoming new rows.
+   * Contacts already stored for this search, with their employers, when it
+   * resumes after a restart. They count toward the target, new sightings merge
+   * into them instead of becoming new rows, and their employers are not asked
+   * for people again.
    */
-  existing?: readonly ContactDraft[];
+  existing?: readonly { draft: ContactDraft; company: Company | null; hasPosting: boolean }[];
 }
 
 export type StopReason =
@@ -95,11 +96,15 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   const budget = new Budget(options.limits, now);
   const health = new SourceHealth(options.sourceFailureThreshold);
   const confCtx = (): ConfidenceContext => ({ taxonomy, now: new Date(now()) });
-  const contacts: TrackedContact[] = (options.existing ?? []).map((draft) => ({
-    draft,
-    lead: isLead(identityConfidence(draft, confCtx())),
-  }));
+  const contacts: TrackedContact[] = [];
   const companies = new Map<string, CompanyState>();
+  for (const { draft, company, hasPosting } of options.existing ?? []) {
+    contacts.push({ draft, lead: isLead(identityConfidence(draft, confCtx())) });
+    if (!company) continue;
+    const state = companies.get(company.id) ?? { company, hasPosting, validated: 0 };
+    state.validated += 1;
+    companies.set(company.id, state);
+  }
   let validated = contacts.length;
   const warned = new Set<string>();
 
@@ -335,7 +340,7 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
 
   const identifyPeople = async (state: CompanyState): Promise<void> => {
     for (const adapter of peopleSources) {
-      if (state.validated >= PEOPLE_PER_COMPANY - 1 || stopCheck()) return;
+      if (state.validated >= PEOPLE_PER_COMPANY || stopCheck()) return;
       if (health.isDisabled(adapter.id)) continue;
       try {
         for await (const raw of adapter.discoverPeople(ctx, state.company)) {
@@ -417,7 +422,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
 
   const final = stopCheck();
   if (final) return finishStopped(final);
-  if (companySources.every((a) => health.isDisabled(a.id) || failedRuns.has(a.id))) {
+  // A source that broke after yielding contacts still produced a usable result.
+  if (validated === 0 && companySources.every((a) => health.isDisabled(a.id) || failedRuns.has(a.id))) {
     return finish('failed', 'all_sources_failed');
   }
   return finish('completed', 'sources_exhausted');

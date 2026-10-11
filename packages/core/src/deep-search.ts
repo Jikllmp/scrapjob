@@ -3,9 +3,9 @@ import type { BudgetSpent } from '@scrapjob/schema/api';
 import { Budget } from './budget';
 import { normaliseSourceError } from './adapters/errors';
 import type { EventSink, SearchContext, SourceAdapter } from './adapters/types';
-import { draftFieldConfidence, identityConfidence, type ConfidenceContext } from './contacts/confidence';
+import { contactConfidence, draftFieldConfidence, identityConfidence, type ConfidenceContext } from './contacts/confidence';
 import { applyPatches, type FieldChange } from './contacts/enrich';
-import { contactFields, isLead, type AttributedEvidence, type ContactDraft } from './contacts/fields';
+import { contactFields, isLead, type AttributedEvidence, type ContactDraft, type ContactField } from './contacts/fields';
 import { classifyTitle } from './contacts/roles';
 import { valueInSnippet } from './extraction/snippet';
 import { planQueries } from './planning/queries';
@@ -31,6 +31,8 @@ export interface DeepSearchRequest {
   draft: ContactDraft;
   company: Company | null;
   hasPosting: boolean;
+  /** The stored score, kept when there is no employer to score against. */
+  previousScore?: { score: number; reasons: string[] } | null;
 }
 
 export interface DeepSearchStore {
@@ -97,7 +99,7 @@ export async function runDeepSearch(request: DeepSearchRequest, options: DeepSea
   const rescore = (draft: ContactDraft, hasPosting: boolean): ScoredDraft =>
     employer
       ? scoreDraft(draft, { company: employer, hasPosting }, scoring())
-      : { draft, score: { score: 0, reasons: [] }, confidence: 'UNKNOWN' };
+      : { draft, score: request.previousScore ?? { score: 0, reasons: [] }, confidence: contactConfidence(draft, confCtx()) };
   const initial = rescore(request.draft, request.hasPosting);
   const before = snapshot(initial, confCtx());
 
@@ -142,6 +144,10 @@ export async function runDeepSearch(request: DeepSearchRequest, options: DeepSea
       }
       for (const patch of parsed.data.patches) {
         const e = patch.evidence;
+        if (!isContactField(patch.field)) {
+          events.emit('EXTRACTION_REJECTED', 'warn', `${adapter.id}: "${patch.field}" is not a contact field`, { adapter: adapter.id, sourceUrl: e.sourceUrl });
+          continue;
+        }
         if (patch.field !== e.field || !valueInSnippet(e.value, e.snippet)) {
           events.emit('EXTRACTION_REJECTED', 'warn', `${adapter.id}: "${patch.field}" value is not in its snippet`, {
             adapter: adapter.id,
@@ -198,4 +204,8 @@ export async function runDeepSearch(request: DeepSearchRequest, options: DeepSea
     postingUrl: posting?.posting.url ?? null,
     budgetSpent: spent,
   };
+}
+
+function isContactField(field: string): field is ContactField {
+  return (contactFields as readonly string[]).includes(field);
 }

@@ -113,7 +113,10 @@ export class SearchRunner {
       .from(contacts)
       .where(eq(contacts.searchId, searchId))
       .all()
-      .flatMap(({ id }) => loadStoredContact(this.db, id, this.taxonomy)?.draft ?? []);
+      .flatMap(({ id }) => {
+        const stored = loadStoredContact(this.db, id, this.taxonomy);
+        return stored ? [{ draft: stored.draft, company: stored.company, hasPosting: stored.hasPosting }] : [];
+      });
     try {
       const outcome = await runSearch(
         { searchId, location: search.location, position: search.position, targetCount: search.targetCount },
