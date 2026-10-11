@@ -53,8 +53,8 @@ contacts will be rare.
   been run on a real extract; if a column was renamed, it stops and names the file and column.
 - **Brave terms.** How long search-result excerpts may be stored depends on the Brave plan. Check yours; the default
   retention of 180 days may need to be shorter.
-- **Resume after a crash** reruns the search from the start, keeping the contacts already stored and merging new
-  sightings into them, so requests are spent twice.
+- **Resume after a crash** reruns the search's queries from the start. Contacts already stored are kept, their
+  employers are not asked again, and new sightings merge into them, but the search API calls are spent twice.
 - **One search at a time.** Searches are queued and run one after another in the API process. Nothing runs while the API
   is stopped, including the daily retention check (it runs again at the next start).
 - **Local use only.** The API listens on `127.0.0.1` with no login. Do not expose it to a network.

@@ -31,3 +31,9 @@ documents. A few of those had choices the spec leaves open.
    `--expired`, with or without the `--` that pnpm and npm pass through.
 7. **Playwright for one end-to-end run**, as the spec asks, against the demo server on fixtures. It is a dev
    dependency only; no source uses a headless browser.
+8. **Review fixes.** A full review before release found and fixed, among others: the export module was never
+   committed (the `exports/` ignore rule matched `apps/api/src/exports`); redirects were followed by the transport
+   without a robots.txt check on each hop, so the HTTP client now follows them itself and refuses LinkedIn hosts at
+   every hop; personal addresses on team pages were kept; erased and expired people stayed named in the event log,
+   which is now blanked; shutdown recorded running searches as cancelled; and the Cancel button used the DELETE route,
+   so a late click could delete a finished search. Cancel now has its own route, `POST /api/searches/:id/cancel`.
