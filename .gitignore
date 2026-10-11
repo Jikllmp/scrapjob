@@ -3,8 +3,8 @@ dist/
 .env
 .env.*
 !.env.example
-data/
-exports/
+/data/
+/exports/
 *.db
 *.db-*
 coverage/
