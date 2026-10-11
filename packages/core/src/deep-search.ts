@@ -167,6 +167,19 @@ export async function runDeepSearch(request: DeepSearchRequest, options: DeepSea
     }
   }
 
+  // Interrupted (shutdown): save nothing, so the rerun starts from the stored contact.
+  if (signal.aborted) {
+    return {
+      status: 'failed',
+      message: `Deep search: ${name}: interrupted`,
+      before,
+      after: before,
+      changes: [],
+      postingUrl: null,
+      budgetSpent: budget.spent(),
+    };
+  }
+
   const applied = applyPatches(request.draft, evidence, confCtx());
   // A better-supported title can change the role, and with it the score.
   const newTitle = applied.draft.fields.title;

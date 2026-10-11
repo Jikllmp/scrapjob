@@ -18,6 +18,7 @@ export class SearchRunner {
   private readonly queue: string[] = [];
   private readonly controllers = new Map<string, AbortController>();
   private active: Promise<void> | null = null;
+  private shuttingDown = false;
 
   constructor(
     private readonly db: Db,
@@ -80,7 +81,9 @@ export class SearchRunner {
     while (this.active) await this.active;
   }
 
+  /** Stops work without recording an outcome: a running search stays `running` and resumes at the next start. */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     this.queue.length = 0;
     for (const controller of this.controllers.values()) controller.abort();
     await this.idle();
@@ -136,8 +139,10 @@ export class SearchRunner {
           existing,
         },
       );
+      if (this.shuttingDown) return;
       this.finish(searchId, outcome);
     } catch (err) {
+      if (this.shuttingDown) return;
       this.log.error({ err, searchId }, 'search failed unexpectedly');
       this.db
         .update(searches)

@@ -42,6 +42,8 @@ const secretPaths = ['req.headers.authorization', 'req.headers.cookie', '*.BRAVE
 
 export function buildApp(config: Config, options: BuildOptions): BuiltApp {
   const app = Fastify({
+    // Open event streams would otherwise keep close() waiting forever on Ctrl+C.
+    forceCloseConnections: true,
     logger: options.logger === false ? false : { level: config.LOG_LEVEL, redact: secretPaths },
   });
   const db = openDatabase(options.databasePath);

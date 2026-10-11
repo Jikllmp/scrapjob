@@ -15,10 +15,17 @@ export class RetentionJob {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  /** Never throws: a failed run is logged and the next one tries again. */
   runOnce(): number {
-    const { contacts, files } = purgeExpiredContacts(this.db, this.retentionDays, this.now());
-    if (contacts > 0) this.log.info({ contacts, files, retentionDays: this.retentionDays }, 'retention: deleted expired contacts');
-    return contacts;
+    try {
+      const onFileError = (path: string, err: unknown) => this.log.warn({ path, err }, 'retention: could not delete a spreadsheet (open elsewhere?)');
+      const { contacts, files } = purgeExpiredContacts(this.db, this.retentionDays, this.now(), onFileError);
+      if (contacts > 0) this.log.info({ contacts, files, retentionDays: this.retentionDays }, 'retention: deleted expired contacts');
+      return contacts;
+    } catch (err) {
+      this.log.error({ err }, 'retention run failed');
+      return 0;
+    }
   }
 
   start(): void {

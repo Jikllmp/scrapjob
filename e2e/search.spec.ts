@@ -43,3 +43,22 @@ test('the privacy page states the retention period', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Privacy' })).toBeVisible();
   await expect(page.getByText(/deleted automatically 180 days after/)).toBeVisible();
 });
+
+test('erasing a contact removes it everywhere, Back included', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('City').fill('Charleroi');
+  await page.getByLabel('Position').fill('Développeur .NET');
+  await page.getByRole('button', { name: 'Start search' }).click();
+  await expect(page.locator('main').getByText(/stopped:/)).toBeVisible({ timeout: 90_000 });
+
+  await page.getByRole('link', { name: 'Hugo Lambert' }).click();
+  await page.getByRole('button', { name: 'Erase this contact…' }).click();
+  await page.getByRole('button', { name: 'Erase and blocklist' }).click();
+  const rows = page.getByRole('region', { name: 'Contacts' }).locator('tbody tr');
+  await expect(rows).toHaveCount(4);
+  await expect(page.getByRole('link', { name: 'Hugo Lambert' })).toHaveCount(0);
+
+  await page.goBack();
+  await expect(page.getByRole('alert')).toHaveText('This contact does not exist or was erased.');
+  await expect(page.getByRole('region', { name: 'Engine log' })).not.toContainText('Hugo Lambert');
+});

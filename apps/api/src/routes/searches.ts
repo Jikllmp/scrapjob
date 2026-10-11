@@ -73,6 +73,17 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
     return toDto(findOr404(id));
   });
 
+  /** Stops a queued or running search. Never deletes anything, unlike DELETE. */
+  app.post('/api/searches/:id/cancel', async (request, reply) => {
+    const { id } = parseOr400(SearchIdParams, request.params, 'path');
+    const row = findOr404(id);
+    if (row.status !== 'queued' && row.status !== 'running') {
+      throw new HttpProblem(409, 'Search is not running', `Search ${id} is already ${row.status}.`);
+    }
+    runner.cancel(id);
+    return reply.status(202).send();
+  });
+
   app.delete('/api/searches/:id', async (request, reply) => {
     const { id } = parseOr400(SearchIdParams, request.params, 'path');
     const row = findOr404(id);
@@ -80,7 +91,7 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
       runner.cancel(id);
       return reply.status(202).send();
     }
-    purgeSearch(db, id);
+    purgeSearch(db, id, (path, err) => request.log.warn({ path, err }, 'could not delete a spreadsheet of this search; delete it by hand'));
     return reply.status(204).send();
   });
 }

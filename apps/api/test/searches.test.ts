@@ -133,6 +133,46 @@ describe('search routes', () => {
   });
 });
 
+describe('cancel and shutdown', () => {
+  function slowApp() {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow = {
+      ...noopAdapter,
+      discoverCompanies: async function* () {
+        await gate;
+      },
+    };
+    return { app: testApp({}, [slow]), release };
+  }
+
+  it('cancels with POST …/cancel, and refuses to cancel a finished search instead of deleting it', async () => {
+    const slow = slowApp();
+    built = slow.app;
+    const { searchId } = (await built.app.inject({ method: 'POST', url: '/api/searches', payload: { location: 'Namur', position: 'Dev' } })).json();
+    await new Promise((r) => setTimeout(r, 10));
+    expect((await built.app.inject({ method: 'POST', url: `/api/searches/${searchId}/cancel` })).statusCode).toBe(202);
+    slow.release();
+    await built.ctx.runner.idle();
+    const again = await built.app.inject({ method: 'POST', url: `/api/searches/${searchId}/cancel` });
+    expect(again.statusCode).toBe(409);
+    expect((await built.app.inject({ url: `/api/searches/${searchId}` })).json().status).toBe('cancelled');
+  });
+
+  it('leaves a running search running on shutdown, so the next start resumes it', async () => {
+    const slow = slowApp();
+    built = slow.app;
+    const { searchId } = (await built.app.inject({ method: 'POST', url: '/api/searches', payload: { location: 'Namur', position: 'Dev' } })).json();
+    await new Promise((r) => setTimeout(r, 10));
+    const closing = built.ctx.runner.shutdown();
+    slow.release();
+    await closing;
+    const row = built.ctx.db.select().from(tables.searches).all().find((s) => s.id === searchId)!;
+    expect(row.status).toBe('running');
+    expect(built.ctx.events.listAfter(searchId).map((e) => e.type)).not.toContain('SEARCH_CANCELLED');
+  });
+});
+
 describe('meta routes', () => {
   it('reports health and the source registry', async () => {
     built = testApp();

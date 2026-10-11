@@ -327,6 +327,9 @@ describe('erasure', () => {
     expect(built.ctx.db.select().from(tables.blocklist).all()).toEqual([
       expect.objectContaining({ normalisedName: 'dupont marie', companyDomain: 'acme-software.test' }),
     ]);
+    const log = built.ctx.events.listAfter(searchId);
+    expect(log.some((e) => e.message.includes('Marie Dupont') || JSON.stringify(e.metadata).includes('Marie Dupont'))).toBe(false);
+    expect(log.some((e) => e.message === '[erased]')).toBe(true);
 
     const again = await built.app.inject({
       method: 'POST',
@@ -367,6 +370,9 @@ describe('retention and purge', () => {
     expect(existsSync(file)).toBe(false);
     expect(built.ctx.db.select().from(tables.blocklist).all()).toEqual([]);
     expect(built.ctx.retention.runOnce()).toBe(0);
+    built.ctx.db.update(tables.searchEvents).set({ createdAt: '2020-01-01T00:00:00.000Z' }).run();
+    built.ctx.retention.runOnce();
+    expect(built.ctx.events.listAfter(searchId).every((e) => e.message === '[expired]')).toBe(true);
   });
 
   it('purges one search with --search <id>, in both argument forms', async () => {

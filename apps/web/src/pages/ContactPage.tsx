@@ -48,11 +48,17 @@ export function ContactPage({ contactId, onLogSearch }: Props) {
   });
   const erase = useMutation({
     mutationFn: () => eraseContact(contactId),
-    onSuccess: () => navigate(contact ? `/?search=${encodeURIComponent(contact.search.id)}` : '/'),
+    onSuccess: () => {
+      // Nothing about the person may come back from the cache, through Back or anywhere else.
+      queryClient.removeQueries({ queryKey: ['contact', contactId] });
+      void queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      void queryClient.invalidateQueries({ queryKey: ['privacy'] });
+      navigate(contact ? `/?search=${encodeURIComponent(contact.search.id)}` : '/');
+    },
   });
 
   if (detail.isLoading) return <p className="text-sm text-neutral-500">Loading…</p>;
-  if (!contact) {
+  if (!contact || (detail.isError && detail.error instanceof ApiError && detail.error.problem.status === 404)) {
     return (
       <p role="alert" className="text-sm text-red-700">
         {detail.error instanceof ApiError && detail.error.problem.status === 404 ? 'This contact does not exist or was erased.' : 'Could not load this contact.'}

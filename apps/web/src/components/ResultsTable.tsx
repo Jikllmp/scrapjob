@@ -84,7 +84,7 @@ export function ResultsTable({ rows, loading, quickFilter, onExport, exporting }
         cell: ({ row }) => (
           <div>
             <Link to={`/contacts/${row.original.id}`} className="font-medium hover:underline">
-              {row.original.fullName}
+              {row.original.fullName ?? '(no name)'}
             </Link>
             {row.original.lead && (
               <span className="ml-1.5 rounded bg-neutral-200 px-1 text-[10px] font-medium uppercase text-neutral-700" title="Seen only in search results; confirm before writing">
@@ -197,7 +197,8 @@ export function ResultsTable({ rows, loading, quickFilter, onExport, exporting }
     ['confidence', 'Confidence', options((r) => [r.confidence]), (v) => v],
     ['source', 'Source', options((r) => r.sources), (v) => sourceNames[v] ?? v],
   ];
-  const selectedIds = Object.keys(selection).filter((id) => selection[id]);
+  // Only rows on screen: a quick filter or column filter hides rows that stay selected underneath.
+  const selectedIds = table.getFilteredSelectedRowModel().rows.map((r) => r.id);
 
   return (
     <section aria-label="Contacts" className="space-y-2">

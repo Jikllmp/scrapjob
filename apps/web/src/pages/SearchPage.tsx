@@ -20,11 +20,12 @@ interface Props {
 export function SearchPage({ searchId, events, onLogSearch }: Props) {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   useEffect(() => onLogSearch(searchId, false), [searchId, onLogSearch]);
+  // Filters belong to one search; Back, Forward or a new search starts clean.
+  useEffect(() => setQuickFilter('all'), [searchId]);
 
   const start = useMutation({
     mutationFn: ({ location, position }: { location: string; position: string }) => createSearch({ location, position }),
     onSuccess: ({ searchId }) => {
-      setQuickFilter('all');
       navigate(`/?search=${encodeURIComponent(searchId)}`);
     },
   });
@@ -46,6 +47,8 @@ export function SearchPage({ searchId, events, onLogSearch }: Props) {
   const rows = contacts.data?.items ?? [];
 
   const exporter = useMutation({ mutationFn: (ids?: string[]) => exportContacts(searchId!, ids) });
+  const cancel = useMutation({ mutationFn: (id: string) => cancelSearch(id) });
+  const missing = contacts.error instanceof ApiError && contacts.error.problem.status === 404;
 
   return (
     <div className="space-y-4">
@@ -53,7 +56,7 @@ export function SearchPage({ searchId, events, onLogSearch }: Props) {
         disabled={start.isPending}
         running={running}
         onSubmit={(location, position) => start.mutate({ location, position })}
-        onCancel={() => searchId && void cancelSearch(searchId)}
+        onCancel={() => searchId && cancel.mutate(searchId)}
       />
       {start.error && (
         <p role="alert" className="text-sm text-red-700">
@@ -66,13 +69,24 @@ export function SearchPage({ searchId, events, onLogSearch }: Props) {
         <CounterStrip events={events} rows={rows} targetCount={targetCount} quickFilter={quickFilter} onQuickFilter={setQuickFilter} />
       )}
       {last && <p className={`text-sm ${last.level === 'error' ? 'text-red-700' : 'text-neutral-700'}`}>{last.message}</p>}
+      {cancel.error && (
+        <p role="alert" className="text-sm text-red-700">
+          {cancel.error.message}
+        </p>
+      )}
+      {missing && (
+        <p role="alert" className="text-sm text-red-700">
+          This search does not exist or was deleted.
+        </p>
+      )}
       {exporter.error && (
         <p role="alert" className="text-sm text-red-700">
           Export failed: {exporter.error.message}
         </p>
       )}
-      {searchId && (
+      {searchId && !missing && (
         <ResultsTable
+          key={searchId}
           rows={rows}
           loading={contacts.isLoading}
           quickFilter={quickFilter}

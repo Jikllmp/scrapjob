@@ -271,4 +271,26 @@ describe('a failing source mid-search', () => {
     expect(outcome).toMatchObject({ status: 'completed', stopReason: 'sources_exhausted', validatedContacts: 5 });
     expect(store.contacts.size).toBe(5);
   });
+
+  it('reports a source that broke after yielding contacts as a completed, partial result', async () => {
+    const flaky = fakeAdapter({
+      id: 'discovery',
+      companies: async function* () {
+        yield company('Acme', { city: 'Charleroi' });
+        throw sourceFailure('discovery', 'RateLimited', 'HTTP 429 on page 2');
+      },
+    });
+    const { opts } = setup([flaky, people('site', { Acme: [teamPagePerson('Acme', 'Marie Dupont', 'Talent Acquisition Manager')] })]);
+    const outcome = await runSearch(request, opts);
+    expect(outcome).toMatchObject({ status: 'completed', stopReason: 'sources_exhausted', validatedContacts: 1 });
+  });
+
+  it('asks the next people source until the employer has given 3 people', async () => {
+    const first = people('first', {
+      Acme: [teamPagePerson('Acme', 'Marie Dupont', 'Talent Acquisition Manager'), teamPagePerson('Acme', 'Luc Peeters', 'HR Business Partner')],
+    });
+    const second = people('second', { Acme: [teamPagePerson('Acme', 'Sara Janssens', 'Recruiter')] });
+    const { opts } = setup([discovery('Acme'), first, second]);
+    expect((await runSearch(request, opts)).validatedContacts).toBe(3);
+  });
 });

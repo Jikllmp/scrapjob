@@ -9,7 +9,7 @@ export interface TransportRequest {
 
 export interface TransportResponse {
   status: number;
-  /** Final URL after redirects. */
+  /** The URL that answered. Redirects are not followed by the transport: the HTTP client checks each hop. */
   url: string;
   headers: Record<string, string>;
   body: string;
@@ -30,7 +30,7 @@ export const undiciTransport: Transport = async (request) => {
   try {
     const res = await fetch(request.url, {
       headers: request.headers,
-      redirect: 'follow',
+      redirect: 'manual',
       signal: AbortSignal.any([request.signal, timeout]),
     });
     const length = Number(res.headers.get('content-length') ?? 0);

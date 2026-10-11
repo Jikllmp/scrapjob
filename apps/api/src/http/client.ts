@@ -29,13 +29,21 @@ export interface GetOptions {
 }
 
 type Robots = ReturnType<typeof robotsParser>;
-type RobotsEntry = { robots: Robots | null; disallowAll: boolean };
+type RobotsEntry = { robots: Robots | null; disallowAll: boolean; ttlMs: number };
 type Circuit = { failures: number; open: boolean };
 
 /** Consecutive failed requests to one host before the client stops calling it for the rest of the search. */
 export const CIRCUIT_BREAKER_THRESHOLD = 5;
 /** A cached robots.txt is re-read after a day (RFC 9309 asks for at most 24 hours). */
 export const ROBOTS_TTL_MS = 24 * 60 * 60 * 1000;
+/** An unreachable or failing robots.txt means "disallow", but only for a few minutes. */
+const ROBOTS_ERROR_TTL_MS = 10 * 60 * 1000;
+/** Redirects followed per request, each hop checked like a fresh URL (RFC 9309 asks for at least 5). */
+export const MAX_REDIRECTS = 5;
+/** Longest wait accepted from a Retry-After header or the backoff. */
+export const MAX_BACKOFF_MS = 60_000;
+/** Hosts never fetched, whoever links to them (spec §2.1). Their pages are read only through search results. */
+const forbiddenHost = (host: string) => /(^|\.)linkedin\.com$/i.test(host) || /(^|\.)lnkd\.in$/i.test(host);
 
 /**
  * The only way adapters reach the network. It sends an honest User-Agent,
@@ -68,9 +76,30 @@ export class HttpClient {
     return this.options.contactUrl !== undefined;
   }
 
-  /** Fetches a URL. Returns non-error statuses (2xx, 3xx, 404, …) for the caller to judge. */
+  /**
+   * Fetches a URL. Follows redirects itself, so every hop is checked against
+   * robots.txt, the forbidden hosts and the rate limits. Returns non-error
+   * statuses (2xx, 404, …) for the caller to judge.
+   */
   async get(url: string, opts: GetOptions): Promise<TransportResponse> {
+    let current = url;
+    for (let hop = 0; ; hop += 1) {
+      const res = await this.getOne(current, opts);
+      const location = res.headers['location'];
+      if (res.status < 300 || res.status >= 400 || !location) return res;
+      if (hop >= MAX_REDIRECTS) throw sourceFailure(opts.adapter, 'SourceUnavailable', `more than ${MAX_REDIRECTS} redirects`, url);
+      current = new URL(location, current).toString();
+    }
+  }
+
+  private async getOne(url: string, opts: GetOptions): Promise<TransportResponse> {
     const parsed = new URL(url);
+    if (forbiddenHost(parsed.hostname)) {
+      throw sourceFailure(opts.adapter, 'RobotsDisallowed', `${parsed.hostname} pages are never fetched`, url);
+    }
+    if (opts.robots !== false && !this.canCrawl) {
+      throw sourceFailure(opts.adapter, 'AuthRequired', 'USER_AGENT_CONTACT_URL is not set, and no page is read without one', url);
+    }
     const circuit = this.circuitFor(parsed.host, opts);
     if (circuit.open) throw sourceFailure(opts.adapter, 'SourceUnavailable', `${parsed.host} failed repeatedly; skipped for this search`, url);
     try {
@@ -128,27 +157,37 @@ export class HttpClient {
     return res;
   }
 
-  private robotsFor(origin: string, opts: GetOptions): Promise<RobotsEntry> {
+  private async robotsFor(origin: string, opts: GetOptions): Promise<RobotsEntry> {
     const cached = this.robotsCache.get(origin);
-    let entry = cached && this.now() - cached.at < ROBOTS_TTL_MS ? cached.entry : undefined;
-    if (!entry) {
-      const robotsUrl = `${origin}/robots.txt`;
-      entry = this.fetchWithRetries(robotsUrl, opts, 0).then(
-        (res): RobotsEntry => {
-          if (res.status >= 200 && res.status < 300) return { robots: robotsParser(robotsUrl, res.body), disallowAll: false };
-          // RFC 9309: a missing robots.txt allows everything; a server error means assume everything is disallowed.
-          if (res.status >= 400 && res.status < 500) return { robots: null, disallowAll: false };
-          return { robots: null, disallowAll: true };
-        },
-        (): RobotsEntry => {
-          // Unreachable this time: treat as disallowed now, but ask again next time.
-          this.robotsCache.delete(origin);
-          return { robots: null, disallowAll: true };
-        },
-      );
-      this.robotsCache.set(origin, { entry, at: this.now() });
+    if (cached) {
+      const entry = await cached.entry;
+      if (this.now() - cached.at < entry.ttlMs) return entry;
     }
+    const robotsUrl = `${origin}/robots.txt`;
+    const entry = this.fetchRobots(robotsUrl, opts).then(
+      (res): RobotsEntry => {
+        if (res.status >= 200 && res.status < 300) return { robots: robotsParser(res.url, res.body), disallowAll: false, ttlMs: ROBOTS_TTL_MS };
+        // RFC 9309: a missing robots.txt (4xx) allows everything; a server error means assume everything is disallowed.
+        if (res.status >= 400 && res.status < 500) return { robots: null, disallowAll: false, ttlMs: ROBOTS_TTL_MS };
+        return { robots: null, disallowAll: true, ttlMs: ROBOTS_ERROR_TTL_MS };
+      },
+      // Unreachable, rate-limited or redirecting forever: disallowed for now, asked again in a few minutes.
+      (): RobotsEntry => ({ robots: null, disallowAll: true, ttlMs: ROBOTS_ERROR_TTL_MS }),
+    );
+    this.robotsCache.set(origin, { entry, at: this.now() });
     return entry;
+  }
+
+  /** robots.txt follows its redirects (RFC 9309 §2.3.1.2), up to five hops. */
+  private async fetchRobots(url: string, opts: GetOptions): Promise<TransportResponse> {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const res = await this.fetchWithRetries(current, opts, 0);
+      const location = res.headers['location'];
+      if (res.status < 300 || res.status >= 400 || !location) return { ...res, url: current };
+      current = new URL(location, current).toString();
+    }
+    throw sourceFailure(opts.adapter, 'SourceUnavailable', 'robots.txt redirects too many times', url);
   }
 
   private async fetchWithRetries(url: string, opts: GetOptions, minIntervalMs: number): Promise<TransportResponse> {
@@ -183,7 +222,7 @@ export class HttpClient {
         const streak = (this.backoffs.get(host) ?? 0) + 1;
         this.backoffs.set(host, streak);
         const retryAfter = Number(res.headers['retry-after']);
-        const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2 ** streak * 1000;
+        const wait = Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2 ** Math.min(streak, 6) * 1000, MAX_BACKOFF_MS);
         this.limiter.backOff(host, wait);
         opts.ctx.events.emit('RATE_LIMITED', 'warn', `${host} answered ${res.status}; backing off ${Math.round(wait / 1000)} s`, {
           adapter: opts.adapter,
