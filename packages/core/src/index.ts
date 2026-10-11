@@ -22,3 +22,4 @@ export * from './planning/queries';
 export * from './taxonomy';
 export * from './taxonomy-parse';
 export * from './text/normalise';
+export * from './employers';

@@ -20,9 +20,24 @@ cp .env.example .env    # then set BRAVE_API_KEY and USER_AGENT_CONTACT_URL
 pnpm dev                # API on :3001, web on http://localhost:5173
 ```
 
-`pnpm dev` creates `data/scrapjob.db` and applies the migrations on first start. Without `BRAVE_API_KEY` the search
-fails at once with "no company discovery source is available"; without `USER_AGENT_CONTACT_URL` it refuses to send any
-request.
+`pnpm dev` creates `data/scrapjob.db` and applies the migrations on first start. Without `USER_AGENT_CONTACT_URL` it
+refuses to send any request.
+
+### Search without an API key
+
+Until you have a Brave key, employers come from your own list in `config/employers.yaml` (name, website, commune,
+optional fields; a few examples ship with it, check them). Set `USER_AGENT_CONTACT_URL` (for example
+`https://github.com/Jikllmp/scrapjob`) and restart the API after editing the list. A search then:
+
+1. takes the listed employers inside the city (its sections included) and in the position's field;
+2. reads their own sites and job feeds for recruiters and managers, as with a key;
+3. lists the employers under the results, each with a **Search on LinkedIn** button. It opens a LinkedIn people search
+   for that employer's recruiters in your own browser, logged in as you. The app never opens LinkedIn itself.
+4. **Add a person** on the same row takes the profile URL, name and title you copy from LinkedIn and adds them as a
+   contact (`MEDIUM`, "added by you"). The link is stored, never opened.
+
+If your `.env` sets `ENABLED_SOURCES`, add `employer-list` to it. With neither a key nor a listed employer in the
+city, the search stops at once with "no company discovery source is available".
 
 ### Try it without a key
 

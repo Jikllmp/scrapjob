@@ -75,6 +75,6 @@ export const CompanyEvidenceField = z.enum(companyEvidenceFields);
 export const EvidenceField = z.enum([...contactEvidenceFields, ...companyEvidenceFields]);
 export type EvidenceField = z.infer<typeof EvidenceField>;
 
-export const evidenceSourceKinds = ['page', 'search_snippet', 'dataset'] as const;
+export const evidenceSourceKinds = ['page', 'search_snippet', 'dataset', 'user'] as const;
 export const EvidenceSourceKind = z.enum(evidenceSourceKinds);
 export type EvidenceSourceKind = z.infer<typeof EvidenceSourceKind>;

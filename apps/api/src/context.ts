@@ -5,6 +5,7 @@ import type { EventBus } from './events/bus';
 import type { EventStore } from './events/store';
 import type { DeepSearchRunner } from './deep-search/runner';
 import type { SearchRunner } from './searches/runner';
+import type { DrizzlePipelineStore } from './contacts/store';
 import type { RetentionJob } from './privacy/retention';
 
 export interface AppContext {
@@ -13,6 +14,7 @@ export interface AppContext {
   bus: EventBus;
   events: EventStore;
   registry: AdapterRegistry;
+  store: DrizzlePipelineStore;
   runner: SearchRunner;
   deepSearch: DeepSearchRunner;
   retention: RetentionJob;

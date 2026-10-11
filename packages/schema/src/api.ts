@@ -237,3 +237,33 @@ export type ContactDetailDto = z.infer<typeof ContactDetailDto>;
 
 export const CreateDeepSearchResponse = z.object({ deepSearchId: z.string() });
 export type CreateDeepSearchResponse = z.infer<typeof CreateDeepSearchResponse>;
+
+/** An employer a search looked at, with a ready LinkedIn people search the user opens themselves. */
+export const SearchCompanyDto = z.object({
+  id: z.string(),
+  name: z.string(),
+  website: z.string().nullable(),
+  city: z.string().nullable(),
+  industry: z.string().nullable(),
+  isAgency: z.boolean(),
+  hasPosting: z.boolean(),
+  contacts: z.number().int(),
+  linkedinSearchUrl: z.string(),
+});
+export type SearchCompanyDto = z.infer<typeof SearchCompanyDto>;
+export const SearchCompanyListDto = z.object({ items: z.array(SearchCompanyDto) });
+export type SearchCompanyListDto = z.infer<typeof SearchCompanyListDto>;
+
+/** A person the user found on LinkedIn and adds by hand. The app never opens the URL. */
+export const AddContactBody = z.object({
+  companyId: z.string().min(1).max(64),
+  profileUrl: z
+    .url({ protocol: /^https$/ })
+    .max(300)
+    .refine((u) => /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#]+\/?([?#].*)?$/i.test(u), 'must be a LinkedIn profile URL (https://www.linkedin.com/in/…)'),
+  fullName: z.string().trim().min(3).max(100),
+  title: z.string().trim().min(2).max(150),
+});
+export type AddContactBody = z.infer<typeof AddContactBody>;
+export const AddContactResponse = z.object({ contactId: z.string() });
+export type AddContactResponse = z.infer<typeof AddContactResponse>;

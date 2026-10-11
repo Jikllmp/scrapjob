@@ -13,6 +13,8 @@ export const EvidenceRef = z.object({
   /**
    * `page`: the adapter fetched the page itself. `search_snippet`: seen only in
    * a search result. `dataset`: a record of an open-data file such as the business register.
+   * `user`: typed in by the user (the employer list, a pasted profile); the
+   * app never fetched the source.
    */
   sourceKind: EvidenceSourceKind,
   retrievedAt: isoDate,

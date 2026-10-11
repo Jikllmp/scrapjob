@@ -1,10 +1,11 @@
 import type { SearchEventDto } from '@scrapjob/schema/api';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { CompaniesPanel } from '../components/CompaniesPanel';
 import { CounterStrip } from '../components/CounterStrip';
 import { ResultsTable, type QuickFilter } from '../components/ResultsTable';
 import { SearchForm } from '../components/SearchForm';
-import { ApiError, cancelSearch, createSearch, exportContacts, listContacts } from '../lib/api';
+import { ApiError, cancelSearch, createSearch, exportContacts, listCompanies, listContacts } from '../lib/api';
 import { navigate } from '../lib/router';
 import { hasEnded } from '../lib/useSearchEvents';
 
@@ -45,6 +46,13 @@ export function SearchPage({ searchId, events, onLogSearch }: Props) {
     placeholderData: (previous, query) => (query?.queryKey[1] === searchId ? previous : undefined),
   });
   const rows = contacts.data?.items ?? [];
+  const companyRevision = events.filter((e) => e.type === 'COMPANY_DISCOVERED').length;
+  const companies = useQuery({
+    queryKey: ['companies', searchId, companyRevision, finished],
+    queryFn: () => listCompanies(searchId!),
+    enabled: searchId !== null,
+    placeholderData: (previous, query) => (query?.queryKey[1] === searchId ? previous : undefined),
+  });
 
   const exporter = useMutation({ mutationFn: (ids?: string[]) => exportContacts(searchId!, ids) });
   const cancel = useMutation({ mutationFn: (id: string) => cancelSearch(id) });
@@ -92,6 +100,15 @@ export function SearchPage({ searchId, events, onLogSearch }: Props) {
           quickFilter={quickFilter}
           onExport={(ids) => exporter.mutate(ids)}
           exporting={exporter.isPending}
+        />
+      )}
+      {searchId && !missing && (
+        <CompaniesPanel
+          key={`companies-${searchId}`}
+          searchId={searchId}
+          companies={companies.data?.items ?? []}
+          loading={companies.isLoading}
+          running={running}
         />
       )}
     </div>

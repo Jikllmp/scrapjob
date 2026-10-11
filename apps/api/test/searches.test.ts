@@ -176,9 +176,10 @@ describe('cancel and shutdown', () => {
 describe('meta routes', () => {
   it('reports health and the source registry', async () => {
     built = testApp();
-    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.4.0' });
+    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.5.0' });
     const { items } = (await built.app.inject({ url: '/api/sources' })).json() as { items: Record<string, unknown>[] };
     expect(items.map((s) => [s.id, s.capabilities, s.enabled, s.available, s.unavailableReason])).toEqual([
+      ['employer-list', ['companies'], false, false, 'config/employers.yaml lists no employer'],
       ['web-search', ['companies', 'enrich'], false, false, 'BRAVE_API_KEY is not set'],
       ['registry', ['enrich'], false, false, 'the business register is not imported yet (pnpm registry:import -- <folder>)'],
       ['job-board', ['jobs'], false, false, 'USER_AGENT_CONTACT_URL is not set, and no feed is read without one'],

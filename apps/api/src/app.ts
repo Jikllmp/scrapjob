@@ -1,11 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { AdapterRegistry, type SourceAdapter } from '@scrapjob/core';
+import { AdapterRegistry, type Employer, type SourceAdapter } from '@scrapjob/core';
 import { createAdapters } from './adapters';
 import { DrizzlePipelineStore } from './contacts/store';
 import { HttpClient } from './http/client';
 import { undiciTransport, type Transport } from './http/transport';
 import { BraveSearch } from './search/brave';
-import { loadTaxonomy } from './taxonomy';
+import { loadEmployers, loadTaxonomy } from './taxonomy';
+import { registerCompanyRoutes } from './routes/companies';
 import { registerContactRoutes } from './routes/contacts';
 import type { Config } from './config';
 import type { AppContext } from './context';
@@ -28,6 +29,8 @@ export interface BuildOptions {
   transport?: Transport;
   /** Replaces the whole adapter list (orchestration tests). */
   adapters?: readonly SourceAdapter[];
+  /** Replaces config/employers.yaml (the demo and tests use their own list). */
+  employers?: readonly Employer[];
   logger?: boolean;
   /** Time source for rate limiting and backoff (tests use a virtual clock). */
   clock?: { now: () => number; sleep: (ms: number) => Promise<void> };
@@ -60,7 +63,7 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
     ...(options.clock ?? {}),
   });
   const brave = new BraveSearch(http, config.BRAVE_API_KEY);
-  const registry = new AdapterRegistry(options.adapters ?? createAdapters({ http, brave, db }), config.ENABLED_SOURCES);
+  const registry = new AdapterRegistry(options.adapters ?? createAdapters({ http, brave, db, employers: options.employers ?? loadEmployers(options.configDir) }), config.ENABLED_SOURCES);
   const store = new DrizzlePipelineStore(db);
   const runner = new SearchRunner(db, events, registry, store, taxonomy, config, app.log);
   const deepSearch = new DeepSearchRunner(db, events, registry, store, taxonomy, config, app.log);
@@ -71,12 +74,13 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
     bus,
     events,
     registry,
+    store,
     runner,
     deepSearch,
     retention,
     taxonomy,
     exportDir: options.exportDir,
-    version: '0.4.0',
+    version: '0.5.0',
   };
 
   registerProblemHandlers(app);
@@ -84,6 +88,7 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
   registerSearchRoutes(app, ctx);
   registerEventRoutes(app, ctx);
   registerContactRoutes(app, ctx);
+  registerCompanyRoutes(app, ctx);
 
   app.addHook('onClose', async () => {
     retention.stop();

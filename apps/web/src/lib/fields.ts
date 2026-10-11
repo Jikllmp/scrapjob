@@ -23,6 +23,7 @@ export const fieldOrder = ['full_name', 'first_name', 'last_name', 'title', 'dep
 export const sourceKindLabel: Record<EvidenceDto['sourceKind'], string> = {
   page: 'page read',
   search_snippet: 'search result only',
+  user: 'added by you',
   dataset: 'open-data record',
 };
 

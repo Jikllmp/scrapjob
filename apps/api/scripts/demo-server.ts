@@ -29,6 +29,8 @@ const { app, ctx } = buildApp(config, {
   configDir: resolve(repoRoot, 'config'),
   exportDir: join(scratch, 'exports'),
   transport: fixtureTransport().transport,
+  // The fixtures cover no real employer, so config/employers.yaml stays out of the demo.
+  employers: [],
 });
 
 await importRegistry(ctx.db, join(dirname(fileURLToPath(import.meta.url)), '../test/fixtures/kbo'));

@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { tables } from '@scrapjob/schema';
-import type { ContactDetailDto, ContactRowDto, SourceDto } from '@scrapjob/schema/api';
+import type { ContactDetailDto, ContactRowDto, SearchCompanyDto, SourceDto } from '@scrapjob/schema/api';
 import type { BuiltApp } from '../src/app';
 import { CONTACT_COLUMNS } from '../src/exports/workbook';
 import { importRegistry } from '../src/registry/import';
@@ -419,5 +419,120 @@ describe('retention and purge', () => {
       expect(code).toBe(2);
       expect(output).toMatch(/^Usage:/);
     }
+  });
+});
+
+describe('a search without an API key', () => {
+  const employers = [
+    { name: 'Acme Software', website: 'https://www.acme-software.test/', city: 'Gosselies', fields: ['software'] },
+    { name: 'Initech', website: 'https://www.initech.test/', city: 'Marcinelle', fields: [] },
+    { name: 'Mons Digital', website: 'https://www.mons-digital.test/', city: 'Mons', fields: [] },
+    { name: 'Beton Wallon', city: 'Charleroi', fields: ['construction'] },
+  ];
+  const noKey = {
+    ENABLED_SOURCES: 'employer-list,web-search,registry,job-board,company-site,linkedin-public,press-events',
+    USER_AGENT_CONTACT_URL: 'https://example.org/scrapjob-bot',
+  };
+
+  async function noKeySearch() {
+    const fixtures = fixtureTransport();
+    built = testApp(noKey, { transport: fixtures.transport, employers });
+    const res = await built.app.inject({
+      method: 'POST',
+      url: '/api/searches',
+      payload: { location: 'Charleroi', position: 'Développeur .NET' },
+    });
+    const { searchId } = res.json() as { searchId: string };
+    await built.ctx.runner.idle();
+    return { searchId, fixtures };
+  }
+
+  const addPerson = (searchId: string, payload: object) =>
+    built.app.inject({ method: 'POST', url: `/api/searches/${searchId}/contacts`, payload });
+
+  it('finds people on the listed employers’ own sites, with no search API call', async () => {
+    const { searchId, fixtures } = await noKeySearch();
+    const search = (await built.app.inject({ url: `/api/searches/${searchId}` })).json();
+    expect(search.status).toBe('completed');
+    expect(search.budgetSpent.searchApiCalls).toBe(0);
+    expect(fixtures.requests.some((r) => r.url.includes('mons-digital'))).toBe(false);
+    const contacts = (await built.app.inject({ url: `/api/searches/${searchId}/contacts` })).json().items as ContactRowDto[];
+    expect(contacts.map((c) => [c.fullName, c.company?.name, c.confidence])).toContainEqual(['Marie Dupont', 'Acme Software', 'VERIFIED']);
+  });
+
+  it('lists the employers in the area with a LinkedIn people search for each', async () => {
+    const { searchId, fixtures } = await noKeySearch();
+    const { items } = (await built.app.inject({ url: `/api/searches/${searchId}/companies` })).json() as { items: SearchCompanyDto[] };
+    expect(items.map((c) => c.name)).toEqual(['Acme Software', 'Initech']);
+    const acme = items[0]!;
+    expect(acme.contacts).toBeGreaterThan(0);
+    const url = new URL(acme.linkedinSearchUrl);
+    expect(url.origin + url.pathname).toBe('https://www.linkedin.com/search/results/people/');
+    expect(url.searchParams.get('keywords')).toContain('"Acme Software"');
+    expect(fixtures.requests.some((r) => r.url.includes('linkedin.com'))).toBe(false);
+  });
+
+  it('adds a person pasted from LinkedIn as a confirmed contact, without opening the profile', async () => {
+    const { searchId, fixtures } = await noKeySearch();
+    const before = fixtures.requests.length;
+    const { items } = (await built.app.inject({ url: `/api/searches/${searchId}/companies` })).json() as { items: SearchCompanyDto[] };
+    const initech = items.find((c) => c.name === 'Initech')!;
+    const res = await addPerson(searchId, {
+      companyId: initech.id,
+      profileUrl: 'https://be.linkedin.com/in/julie-renard-initech/?trk=foo',
+      fullName: 'Julie  Renard',
+      title: 'Talent Acquisition Specialist',
+    });
+    expect(res.statusCode).toBe(201);
+    const { contactId } = res.json() as { contactId: string };
+    const contact = (await built.app.inject({ url: `/api/contacts/${contactId}` })).json() as ContactDetailDto;
+    expect(contact).toMatchObject({
+      fullName: 'Julie Renard',
+      firstName: 'Julie',
+      lastName: 'Renard',
+      title: 'Talent Acquisition Specialist',
+      profileUrl: 'https://linkedin.com/in/julie-renard-initech',
+      confidence: 'MEDIUM',
+      lead: false,
+      sources: ['manual'],
+    });
+    expect(contact.company?.name).toBe('Initech');
+    expect(contact.evidence.every((e) => e.sourceKind === 'user' && e.snippet.startsWith('Added by you'))).toBe(true);
+    expect(fixtures.requests.length).toBe(before);
+    const log = built.ctx.events.listAfter(searchId).map((e) => e.message);
+    expect(log.some((m) => m.startsWith('Julie Renard — Talent Acquisition Specialist, Initech (added by you'))).toBe(true);
+  });
+
+  it('refuses duplicates, other employers, other sites and non-hiring roles', async () => {
+    const { searchId } = await noKeySearch();
+    const { items } = (await built.app.inject({ url: `/api/searches/${searchId}/companies` })).json() as { items: SearchCompanyDto[] };
+    const acme = items.find((c) => c.name === 'Acme Software')!;
+    const person = { companyId: acme.id, profileUrl: 'https://www.linkedin.com/in/tom-noel', fullName: 'Tom Noël', title: 'HR Manager' };
+    expect((await addPerson(searchId, person)).statusCode).toBe(201);
+    expect((await addPerson(searchId, { ...person, fullName: 'Thomas Noël' })).json()).toMatchObject({ status: 409, title: 'Already in this search' });
+    expect((await addPerson(searchId, { ...person, companyId: 'nope' })).statusCode).toBe(404);
+    expect((await addPerson(searchId, { ...person, profileUrl: 'https://www.acme-software.test/equipe' })).statusCode).toBe(400);
+    expect((await addPerson(searchId, { ...person, profileUrl: 'https://www.linkedin.com/company/acme' })).statusCode).toBe(400);
+    const accountant = await addPerson(searchId, { ...person, profileUrl: 'https://www.linkedin.com/in/eva-roche', fullName: 'Eva Roche', title: 'Comptable' });
+    expect(accountant.json()).toMatchObject({ status: 422, detail: '"Comptable" is not a hiring-relevant role.' });
+  });
+
+  it('will not add back a person who was erased', async () => {
+    const { searchId } = await noKeySearch();
+    const { items } = (await built.app.inject({ url: `/api/searches/${searchId}/companies` })).json() as { items: SearchCompanyDto[] };
+    const acme = items.find((c) => c.name === 'Acme Software')!;
+    const person = { companyId: acme.id, profileUrl: 'https://www.linkedin.com/in/tom-noel', fullName: 'Tom Noël', title: 'HR Manager' };
+    const { contactId } = (await addPerson(searchId, person)).json() as { contactId: string };
+    expect((await built.app.inject({ method: 'DELETE', url: `/api/contacts/${contactId}` })).statusCode).toBe(204);
+    expect((await addPerson(searchId, person)).json()).toMatchObject({ status: 409, title: 'Contact was erased' });
+  });
+
+  it('says what to do when there is neither a key nor an employer in the area', async () => {
+    built = testApp(noKey, { transport: fixtureTransport().transport, employers });
+    const res = await built.app.inject({ method: 'POST', url: '/api/searches', payload: { location: 'Namur', position: 'Développeur .NET' } });
+    const { searchId } = res.json() as { searchId: string };
+    await built.ctx.runner.idle();
+    const log = built.ctx.events.listAfter(searchId).map((e) => e.message);
+    expect(log).toContain('Your employer list has no employer in Namur');
   });
 });

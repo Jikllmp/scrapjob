@@ -1,0 +1,28 @@
+# Employers you want searched, kept by hand. This is the source that works
+# without any API key: the app reads each employer's own site and job feed
+# (when USER_AGENT_CONTACT_URL is set) and shows a "Search on LinkedIn" button
+# for each one. Restart the API after editing this file.
+#
+#   name:    the employer's name, as people write it on LinkedIn
+#   website: its own site (optional, but without it no page is read)
+#   city:    commune or section from locations.yaml; only employers inside the
+#            searched area are used
+#   fields:  optional; fields from synonyms.yaml (software, engineering). An
+#            employer with fields is only used for positions in those fields.
+#
+# The entries below are starting examples: check them and add your own.
+employers:
+  - name: CETIC
+    website: https://www.cetic.be
+    city: Gosselies
+    fields: [software, engineering]
+  - name: Sonaca
+    website: https://www.sonaca.com
+    city: Gosselies
+    fields: [engineering]
+  - name: IGRETEC
+    website: https://www.igretec.com
+    city: Charleroi
+  - name: Ville de Charleroi
+    website: https://www.charleroi.be
+    city: Charleroi
