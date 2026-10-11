@@ -18,6 +18,7 @@ import { registerMetaRoutes } from './routes/meta';
 import { registerSearchRoutes } from './routes/searches';
 import { SearchRunner } from './searches/runner';
 import { DeepSearchRunner } from './deep-search/runner';
+import { RetentionJob } from './privacy/retention';
 
 export interface BuildOptions {
   databasePath: string;
@@ -41,6 +42,8 @@ const secretPaths = ['req.headers.authorization', 'req.headers.cookie', '*.BRAVE
 
 export function buildApp(config: Config, options: BuildOptions): BuiltApp {
   const app = Fastify({
+    // Open event streams would otherwise keep close() waiting forever on Ctrl+C.
+    forceCloseConnections: true,
     logger: options.logger === false ? false : { level: config.LOG_LEVEL, redact: secretPaths },
   });
   const db = openDatabase(options.databasePath);
@@ -61,6 +64,7 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
   const store = new DrizzlePipelineStore(db);
   const runner = new SearchRunner(db, events, registry, store, taxonomy, config, app.log);
   const deepSearch = new DeepSearchRunner(db, events, registry, store, taxonomy, config, app.log);
+  const retention = new RetentionJob(db, config.DATA_RETENTION_DAYS, app.log);
   const ctx: AppContext = {
     config,
     db,
@@ -69,9 +73,10 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
     registry,
     runner,
     deepSearch,
+    retention,
     taxonomy,
     exportDir: options.exportDir,
-    version: '0.3.0',
+    version: '0.4.0',
   };
 
   registerProblemHandlers(app);
@@ -81,6 +86,7 @@ export function buildApp(config: Config, options: BuildOptions): BuiltApp {
   registerContactRoutes(app, ctx);
 
   app.addHook('onClose', async () => {
+    retention.stop();
     await runner.shutdown();
     await deepSearch.shutdown();
     db.$client.close();

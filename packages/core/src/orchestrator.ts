@@ -32,6 +32,13 @@ export interface OrchestratorOptions {
   sourceFailureThreshold: number;
   signal: AbortSignal;
   now?: () => number;
+  /**
+   * Contacts already stored for this search, with their employers, when it
+   * resumes after a restart. They count toward the target, new sightings merge
+   * into them instead of becoming new rows, and their employers are not asked
+   * for people again.
+   */
+  existing?: readonly { draft: ContactDraft; company: Company | null; hasPosting: boolean }[];
 }
 
 export type StopReason =
@@ -91,7 +98,14 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   const confCtx = (): ConfidenceContext => ({ taxonomy, now: new Date(now()) });
   const contacts: TrackedContact[] = [];
   const companies = new Map<string, CompanyState>();
-  let validated = 0;
+  for (const { draft, company, hasPosting } of options.existing ?? []) {
+    contacts.push({ draft, lead: isLead(identityConfidence(draft, confCtx())) });
+    if (!company) continue;
+    const state = companies.get(company.id) ?? { company, hasPosting, validated: 0 };
+    state.validated += 1;
+    companies.set(company.id, state);
+  }
+  let validated = contacts.length;
   const warned = new Set<string>();
 
   const stopCheck = (): StopReason | null => {
@@ -269,7 +283,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   /** Register facts (sector, legal name) first, so the people found next are scored with them. */
   const enrichCompany = async (state: CompanyState): Promise<void> => {
     for (const adapter of companyEnrichers) {
-      if (health.isDisabled(adapter.id) || stopCheck()) return;
+      if (stopCheck()) return;
+      if (health.isDisabled(adapter.id)) continue;
       try {
         const raw = await adapter.enrichCompany!(ctx, state.company);
         if (!raw) continue;
@@ -297,7 +312,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
   /** Open postings from the employer's job feed: the strongest sign it is hiring for this position. */
   const discoverJobs = async (state: CompanyState): Promise<void> => {
     for (const adapter of jobSources) {
-      if (health.isDisabled(adapter.id) || stopCheck()) return;
+      if (stopCheck()) return;
+      if (health.isDisabled(adapter.id)) continue;
       try {
         for await (const raw of adapter.discoverJobs(ctx, state.company)) {
           const parsed = JobCandidate.safeParse(raw);
@@ -324,7 +340,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
 
   const identifyPeople = async (state: CompanyState): Promise<void> => {
     for (const adapter of peopleSources) {
-      if (state.validated >= PEOPLE_PER_COMPANY - 1 || health.isDisabled(adapter.id) || stopCheck()) return;
+      if (state.validated >= PEOPLE_PER_COMPANY || stopCheck()) return;
+      if (health.isDisabled(adapter.id)) continue;
       try {
         for await (const raw of adapter.discoverPeople(ctx, state.company)) {
           handleCandidate(raw, adapter, state);
@@ -405,7 +422,8 @@ export async function runSearch(request: SearchRequest, options: OrchestratorOpt
 
   const final = stopCheck();
   if (final) return finishStopped(final);
-  if (companySources.every((a) => health.isDisabled(a.id) || failedRuns.has(a.id))) {
+  // A source that broke after yielding contacts still produced a usable result.
+  if (validated === 0 && companySources.every((a) => health.isDisabled(a.id) || failedRuns.has(a.id))) {
     return finish('failed', 'all_sources_failed');
   }
   return finish('completed', 'sources_exhausted');

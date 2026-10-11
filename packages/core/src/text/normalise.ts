@@ -51,9 +51,18 @@ export function normaliseProfileUrl(raw: string): string | null {
     return null;
   }
   const host = url.hostname.toLowerCase().replace(/^(www|[a-z]{2})\.(?=linkedin\.com$)/, '').replace(/^www\./, '');
-  let path = decodeURIComponent(url.pathname).replace(/\/+$/, '');
+  let path = safeDecode(url.pathname).replace(/\/+$/, '');
   if (host === 'linkedin.com') path = path.toLowerCase();
   return `https://${host}${path}`;
+}
+
+function safeDecode(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    // A malformed escape in a scraped URL: compare it as written.
+    return path;
+  }
 }
 
 const twoLevelSuffixes = new Set(['co.uk', 'org.uk', 'ac.uk', 'com.au', 'co.nz', 'com.br', 'co.jp', 'com.tr', 'co.za']);

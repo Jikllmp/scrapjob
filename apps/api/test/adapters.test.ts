@@ -1,3 +1,5 @@
+import { copyFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -118,6 +120,24 @@ describe('web-search adapter', () => {
     expect(await failure(collect(new WebSearchAdapter(brave, http).discoverCompanies(ctx)))).toMatchObject({ kind });
   });
 
+  it('keeps each employer on a shared ATS host as its own careers site', async () => {
+    const { brave, http, fixtures } = setup();
+    const { ctx } = searchContext();
+    const q = encodeURIComponent('"Développeur .NET" Charleroi emploi').replace(/%20/g, '+');
+    const results = [
+      { url: 'https://jobs.lever.co/acme/123', title: 'Développeur .NET - Acme', description: 'Acme recrute à Charleroi' },
+      { url: 'https://jobs.lever.co/globex/456', title: 'Développeur .NET - Globex', description: 'Globex recrute à Charleroi' },
+    ];
+    fixtures.override(`https://api.search.brave.com/res/v1/web/search?q=${q}&count=20&search_lang=fr&country=BE&safesearch=moderate`, {
+      status: 200,
+      body: JSON.stringify({ web: { results } }),
+    });
+    const only = { ...ctx, plan: { ...ctx.plan, seeds: ctx.plan.seeds.slice(0, 1) } };
+    const companies = await collect(new WebSearchAdapter(brave, http).discoverCompanies(only));
+    expect(companies.map((c) => c.website)).toEqual(['https://jobs.lever.co/acme', 'https://jobs.lever.co/globex']);
+    expect(companies.map((c) => feedFor(c.website!)?.ats)).toEqual(['Lever', 'Lever']);
+  });
+
   it('yields nothing for an empty result set', async () => {
     const { brave, http } = setup();
     const { ctx } = searchContext();
@@ -165,6 +185,30 @@ describe('company-site adapter', () => {
     expect(await collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, company('Gone', 'https://gone.test', 'gone.test')))).toEqual([]);
   });
 
+  it('keeps only work addresses: a webmail address on a team card is not collected', async () => {
+    const { http, fixtures } = setup();
+    fixtures.override('https://www.acme-software.test/equipe', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+      body: '<title>Acme Software</title><h1>Acme Software</h1><article><h3>Marie Dupont</h3><p>Talent Acquisition Manager</p><p><a href="mailto:marie.dupont@gmail.com">marie.dupont@gmail.com</a></p></article>',
+    });
+    const people = await collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, acme));
+    const marie = people.find((p) => p.fullName === 'Marie Dupont' && !p.postingContact)!;
+    expect(marie.email).toBeUndefined();
+    expect(marie.evidence.map((e) => e.field)).not.toContain('email');
+  });
+
+  it('survives a link with a malformed escape', async () => {
+    const { http, fixtures } = setup();
+    fixtures.override('https://www.acme-software.test/', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+      body: '<title>Acme Software</title><a href="/caf%E9-equipe">Équipe</a><a href="/equipe">Notre équipe</a>',
+    });
+    const people = await collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, acme));
+    expect(people.map((p) => p.fullName)).toContain('Marie Dupont');
+  });
+
   it('survives malformed HTML', async () => {
     const { http, fixtures } = setup();
     fixtures.override('https://www.acme-software.test/', {
@@ -180,6 +224,29 @@ describe('company-site adapter', () => {
     const globex = company('Globex IT', 'https://globex-it.recruitee.com', null);
     const people = await collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, globex));
     expect(people).toMatchObject([{ fullName: 'Anne Petit', postingContact: true, companyName: 'Globex IT' }]);
+  });
+
+  it.each<[string, number, string]>([
+    ['rate limited', 429, 'RateLimited'],
+    ['forbidden', 403, 'RateLimited'],
+    ['server error', 503, 'SourceUnavailable'],
+  ])('reports a %s home page as %s', async (_name, status, kind) => {
+    const { http, fixtures } = setup();
+    fixtures.override('https://www.acme-software.test/', { status });
+    expect(await failure(collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, acme)))).toMatchObject({ kind });
+  });
+
+  it.each<[string, { headers?: Record<string, string>; body?: string }]>([
+    ['a PDF', { headers: { 'content-type': 'application/pdf' }, body: '%PDF-1.7' }],
+    ['X-Robots-Tag: noindex', { headers: { 'content-type': 'text/html', 'x-robots-tag': 'noindex' }, body: '<h3>Marie Dupont</h3>' }],
+    ['a meta robots noindex', { headers: { 'content-type': 'text/html' }, body: '<meta name="robots" content="noindex"><h3>Marie Dupont</h3><p>Talent Acquisition Manager</p>' }],
+  ])('reads no one from %s', async (_name, response) => {
+    const { http, fixtures } = setup();
+    for (const path of ['', 'equipe', 'carrieres', 'carrieres/developpeur-net']) {
+      fixtures.override(`https://www.acme-software.test/${path}`, { status: 200, ...response });
+    }
+    const people = await collect(new CompanySiteAdapter(http).discoverPeople(searchContext().ctx, acme));
+    expect(people).toEqual([]);
   });
 
   it('refuses to crawl without a contact URL in the User-Agent', async () => {
@@ -200,6 +267,19 @@ describe('linkedin-public adapter', () => {
     ]);
     expect(leads.flatMap((l) => l.evidence).every((e) => e.sourceKind === 'search_snippet')).toBe(true);
     expect(fixtures.requests.map((r) => new URL(r.url).hostname)).toEqual(['api.search.brave.com']);
+  });
+
+  it('reports a rate-limited search API as RateLimited and fetches nothing else', async () => {
+    const probe = setup();
+    await collect(new LinkedInPublicAdapter(probe.brave).discoverPeople(searchContext().ctx, company('Acme Software', null, 'acme-software.test')));
+    const { brave, fixtures } = setup();
+    for (const r of probe.fixtures.requests) fixtures.override(r.url, { status: 429 });
+    const { ctx, events } = searchContext();
+    expect(await failure(collect(new LinkedInPublicAdapter(brave).discoverPeople(ctx, company('Acme Software', null, 'acme-software.test'))))).toMatchObject({
+      kind: 'RateLimited',
+    });
+    expect(events.map((e) => e.type)).toEqual(['QUERY_STARTED', 'RATE_LIMITED']);
+    expect(fixtures.requests).toHaveLength(1);
   });
 
   it('drops people the result places at another company', async () => {
@@ -312,6 +392,21 @@ describe('registry import and adapter', () => {
         ['0999.000.202', 'Initech SRL', '62.020', '2008', 'Charleroi'],
         ['0999.000.303', 'Initech BV', '47.110', '2008', 'Gand'],
       ]);
+    } finally {
+      await built.app.close();
+    }
+  });
+
+  it('leaves the current register untouched when a later file of the new one is wrong', async () => {
+    const built = testApp();
+    try {
+      await importRegistry(built.ctx.db, kbo);
+      const before = built.ctx.db.select().from(tables.registryEnterprises).all().length;
+      const broken = mkdtempSync(join(tmpdir(), 'kbo-broken-'));
+      for (const f of ['enterprise.csv', 'denomination.csv', 'activity.csv']) copyFileSync(join(kbo, f), join(broken, f));
+      writeFileSync(join(broken, 'address.csv'), '"EntityNumber","Zipcode"\n');
+      await expect(importRegistry(built.ctx.db, broken)).rejects.toThrow(/address\.csv has no column TypeOfAddress/);
+      expect(built.ctx.db.select().from(tables.registryEnterprises).all()).toHaveLength(before);
     } finally {
       await built.app.close();
     }

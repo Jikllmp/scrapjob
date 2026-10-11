@@ -21,6 +21,9 @@ const PASSAGE = 240;
 const postingPath = /\/(jobs?|emplois?|offres?|vacatures?|careers?|carrieres?|carrières|vacancies|o|position|postes?)\b/i;
 const genericSegments = /^(jobs?|emplois?|carri[eè]res?|careers?|vacatures?|recrutement|accueil|home|contact|offres? d['’]emploi)$/i;
 
+/** ATS hosts shared by every customer, where the account is the first path segment. */
+const sharedAtsHost = /^(jobs(\.eu)?\.lever\.co|(job-)?boards(\.eu)?\.greenhouse\.io|apply\.workable\.com|jobs\.smartrecruiters\.com|careers\.smartrecruiters\.com|join\.com)$/i;
+
 function titleSegments(title: string): string[] {
   return title
     .split(/\s+[-–—|:·]\s+/)
@@ -85,14 +88,18 @@ export class WebSearchAdapter implements SourceAdapter {
         const domain = registrableDomain(url.hostname);
         if (hosts.aggregators.includes(domain) || hosts.media.includes(domain)) continue;
         const onAts = hosts.ats.includes(domain);
-        const key = onAts ? url.hostname : domain;
+        // On an ATS the employer is the subdomain (acme.recruitee.com) or, on a shared host, the first path
+        // segment (jobs.lever.co/acme, boards.greenhouse.io/acme): that is its careers site.
+        const atsAccount = onAts && sharedAtsHost.test(url.hostname) ? url.pathname.split('/').filter(Boolean)[0] : undefined;
+        const website = atsAccount ? `${url.origin}/${atsAccount}` : url.origin;
+        const key = onAts ? website : domain;
         if (seen.has(key)) continue;
         seen.add(key);
 
         const retrievedAt = new Date().toISOString();
         const text = `${result.url} — ${result.title} — ${result.description}`;
         const snippet = clip(text);
-        const name = companyName(result, onAts ? url.hostname : domain, snippet);
+        const name = companyName(result, onAts ? (atsAccount ?? url.hostname) : domain, snippet);
         const ev = (field: EvidenceRef['field'], value: string): EvidenceRef => ({
           field,
           value,
@@ -102,7 +109,7 @@ export class WebSearchAdapter implements SourceAdapter {
           retrievedAt,
           ...(result.pageAge ? { publishedAt: result.pageAge } : {}),
         });
-        const evidence = [ev('name', name), ev('website', url.origin)];
+        const evidence = [ev('name', name), ev('website', website)];
         const city = ctx.plan.location.areaNames.find((n) => containsPhrase(snippet, n));
         if (city) evidence.push(ev('city', city));
         const isPosting =
@@ -111,7 +118,7 @@ export class WebSearchAdapter implements SourceAdapter {
         yielded += 1;
         yield {
           name,
-          website: url.origin,
+          website,
           domain: onAts ? undefined : domain,
           city,
           isAgency: hosts.agencies.includes(domain),
@@ -142,7 +149,8 @@ export class WebSearchAdapter implements SourceAdapter {
   async enrich(ctx: SearchContext, target: EnrichTarget): Promise<EnrichResultInput> {
     const name = target.fields.full_name;
     const company = target.company;
-    if (!name || !company || ctx.shouldStop()) return {};
+    // Snippets alone add nothing here; the pages are the point, and none is read without a contact URL.
+    if (!name || !company || ctx.shouldStop() || !this.http.canCrawl) return {};
     const text = `"${name}" "${company.name}"`;
     ctx.events.emit('QUERY_STARTED', 'info', text, { adapter: this.id });
     const results = await this.search.search(

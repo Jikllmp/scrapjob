@@ -107,6 +107,7 @@ describe('text helpers', () => {
 
   it('normalises LinkedIn profile URLs', () => {
     expect(normaliseProfileUrl('https://be.linkedin.com/in/Marie-Dupont/?trk=x#a')).toBe('https://linkedin.com/in/marie-dupont');
+    expect(normaliseProfileUrl('https://www.linkedin.com/in/marie%zz')).toBe('https://linkedin.com/in/marie%zz');
   });
 
   it('computes registrable domains', () => {

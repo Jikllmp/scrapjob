@@ -4,6 +4,7 @@ import { Link, useLocation } from './lib/router';
 import { useSearchEvents } from './lib/useSearchEvents';
 import { ContactPage } from './pages/ContactPage';
 import { HistoryPage } from './pages/HistoryPage';
+import { PrivacyPage } from './pages/PrivacyPage';
 import { SearchPage } from './pages/SearchPage';
 import { SourcesPage } from './pages/SourcesPage';
 
@@ -11,6 +12,7 @@ const nav: [string, string][] = [
   ['/', 'Search'],
   ['/searches', 'History'],
   ['/sources', 'Sources'],
+  ['/privacy', 'Privacy'],
 ];
 
 export function App() {
@@ -20,11 +22,12 @@ export function App() {
   const onLogSearch = useCallback((searchId: string | null, follow: boolean) => setLog({ searchId, follow }), []);
   const { events, state } = useSearchEvents(log.searchId, log.follow);
 
-  const contactId = /^\/contacts\/([^/]+)$/.exec(path)?.[1];
+  const contactId = safeDecode(/^\/contacts\/([^/]+)$/.exec(path)?.[1]);
   let page;
-  if (contactId) page = <ContactPage contactId={decodeURIComponent(contactId)} onLogSearch={onLogSearch} />;
+  if (contactId) page = <ContactPage contactId={contactId} onLogSearch={onLogSearch} />;
   else if (path === '/searches') page = <HistoryPage onLogSearch={onLogSearch} />;
   else if (path === '/sources') page = <SourcesPage onLogSearch={onLogSearch} />;
+  else if (path === '/privacy') page = <PrivacyPage onLogSearch={onLogSearch} />;
   else page = <SearchPage searchId={params.get('search')} events={events} onLogSearch={onLogSearch} />;
 
   return (
@@ -46,4 +49,14 @@ export function App() {
       <Terminal events={events} state={state} />
     </div>
   );
+}
+
+/** A hand-typed or truncated URL can hold a broken escape; treat it as an unknown contact rather than crash. */
+function safeDecode(segment: string | undefined): string | undefined {
+  if (segment === undefined) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }

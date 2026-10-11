@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Company, ContactCandidate } from '@scrapjob/schema';
-import { normaliseName, runSearch, type OrchestratorOptions, type SourceAdapter } from '../src';
+import { normaliseName, runSearch, sourceFailure, type OrchestratorOptions, type SourceAdapter } from '../src';
 import { MemoryStore, RecordingSink, T, company, fakeAdapter, taxonomy, teamPagePerson } from './helpers';
 
 const request = { searchId: 's1', location: 'Charleroi', position: 'Développeur .NET', targetCount: 20 };
@@ -246,5 +246,51 @@ describe('employer facts before people', () => {
     await runSearch(request, other.opts);
     expect([...other.store.contacts.values()][0]?.score.reasons.join(' ')).not.toContain('posting');
     expect(other.store.jobs).toHaveLength(0);
+  });
+});
+
+describe('a failing source mid-search', () => {
+  it('is disabled after SOURCE_FAILURE_THRESHOLD rate limits, and the search completes with the other sources', async () => {
+    let calls = 0;
+    const limited = fakeAdapter({
+      id: 'limited',
+      capabilities: ['people'],
+      people: async function* () {
+        calls += 1;
+        throw sourceFailure('limited', 'RateLimited', 'HTTP 429', 'https://limited.test');
+      },
+    });
+    const names = ['Acme', 'Globex', 'Initech', 'Umbrella', 'Hooli'];
+    const recruiters = ['Marie Dupont', 'Luc Peeters', 'Sara Janssens', 'Tom Maes', 'Ines Lambert'];
+    const byCompany = Object.fromEntries(names.map((n, i) => [n, [teamPagePerson(n, recruiters[i]!, 'Talent Acquisition Manager')]]));
+    const { events, store, opts } = setup([discovery(...names), limited, people('site', byCompany)]);
+    const outcome = await runSearch(request, opts);
+
+    expect(calls).toBe(3);
+    expect(events.events.filter((e) => e.type === 'SOURCE_DISABLED').map((e) => e.metadata)).toEqual([{ adapter: 'limited', failures: 3 }]);
+    expect(outcome).toMatchObject({ status: 'completed', stopReason: 'sources_exhausted', validatedContacts: 5 });
+    expect(store.contacts.size).toBe(5);
+  });
+
+  it('reports a source that broke after yielding contacts as a completed, partial result', async () => {
+    const flaky = fakeAdapter({
+      id: 'discovery',
+      companies: async function* () {
+        yield company('Acme', { city: 'Charleroi' });
+        throw sourceFailure('discovery', 'RateLimited', 'HTTP 429 on page 2');
+      },
+    });
+    const { opts } = setup([flaky, people('site', { Acme: [teamPagePerson('Acme', 'Marie Dupont', 'Talent Acquisition Manager')] })]);
+    const outcome = await runSearch(request, opts);
+    expect(outcome).toMatchObject({ status: 'completed', stopReason: 'sources_exhausted', validatedContacts: 1 });
+  });
+
+  it('asks the next people source until the employer has given 3 people', async () => {
+    const first = people('first', {
+      Acme: [teamPagePerson('Acme', 'Marie Dupont', 'Talent Acquisition Manager'), teamPagePerson('Acme', 'Luc Peeters', 'HR Business Partner')],
+    });
+    const second = people('second', { Acme: [teamPagePerson('Acme', 'Sara Janssens', 'Recruiter')] });
+    const { opts } = setup([discovery('Acme'), first, second]);
+    expect((await runSearch(request, opts)).validatedContacts).toBe(3);
   });
 });

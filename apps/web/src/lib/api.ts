@@ -7,6 +7,7 @@ import {
   Problem,
   SearchDto,
   SearchListDto,
+  PrivacyDto,
   SourceListDto,
   type CreateSearchBody,
 } from '@scrapjob/schema/api';
@@ -43,6 +44,7 @@ export const startDeepSearch = (id: string) =>
   request(CreateDeepSearchResponse, `/api/contacts/${encodeURIComponent(id)}/deep-search`, { method: 'POST' });
 
 export const listSources = () => request(SourceListDto, '/api/sources');
+export const getPrivacy = () => request(PrivacyDto, '/api/privacy');
 
 async function remove(url: string): Promise<void> {
   const res = await fetch(url, { method: 'DELETE' });
@@ -57,9 +59,10 @@ export const eraseContact = (id: string) => remove(`/api/contacts/${encodeURICom
 /** Deletes a finished search and everything found in it. */
 export const deleteSearch = (id: string) => remove(`/api/searches/${encodeURIComponent(id)}`);
 
+/** Stops a running search. A search that already ended answers 409, which is not an error here. */
 export async function cancelSearch(id: string): Promise<void> {
-  const res = await fetch(`/api/searches/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok && res.status !== 404) throw new Error(`Cancel failed: HTTP ${res.status}`);
+  const res = await fetch(`/api/searches/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+  if (!res.ok && res.status !== 409) throw new Error(`Cancel failed: HTTP ${res.status}`);
 }
 
 export const listContacts = (searchId: string) =>

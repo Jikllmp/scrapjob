@@ -5,17 +5,20 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Config } from '../config';
 import type { Db } from '../db/client';
 import type { EventStore } from '../events/store';
+import { loadStoredContact } from '../contacts/draft';
 
-const { searches } = tables;
+const { contacts, searches } = tables;
 
 /**
  * In-process worker over the persisted `searches` table. Runs one search at a
- * time. A search left `running` by a crash is re-queued at boot and run again.
+ * time. A search left `running` by a crash is re-queued at boot and run again,
+ * keeping the contacts it had already found.
  */
 export class SearchRunner {
   private readonly queue: string[] = [];
   private readonly controllers = new Map<string, AbortController>();
   private active: Promise<void> | null = null;
+  private shuttingDown = false;
 
   constructor(
     private readonly db: Db,
@@ -43,7 +46,7 @@ export class SearchRunner {
     for (const { id, status } of pending) {
       if (status === 'running') {
         this.db.update(searches).set({ status: 'queued' }).where(eq(searches.id, id)).run();
-        this.events.append(id, 'WARNING', 'warn', 'The server restarted during this search; running it again');
+        this.events.append(id, 'WARNING', 'warn', 'The server restarted during this search; running it again and keeping the contacts already found');
       }
       this.queue.push(id);
     }
@@ -78,7 +81,9 @@ export class SearchRunner {
     while (this.active) await this.active;
   }
 
+  /** Stops work without recording an outcome: a running search stays `running` and resumes at the next start. */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     this.queue.length = 0;
     for (const controller of this.controllers.values()) controller.abort();
     await this.idle();
@@ -106,6 +111,15 @@ export class SearchRunner {
       .set({ status: 'running', startedAt: new Date().toISOString() })
       .where(eq(searches.id, searchId))
       .run();
+    const existing = this.db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(eq(contacts.searchId, searchId))
+      .all()
+      .flatMap(({ id }) => {
+        const stored = loadStoredContact(this.db, id, this.taxonomy);
+        return stored ? [{ draft: stored.draft, company: stored.company, hasPosting: stored.hasPosting }] : [];
+      });
     try {
       const outcome = await runSearch(
         { searchId, location: search.location, position: search.position, targetCount: search.targetCount },
@@ -122,10 +136,13 @@ export class SearchRunner {
           },
           sourceFailureThreshold: this.config.SOURCE_FAILURE_THRESHOLD,
           signal: controller.signal,
+          existing,
         },
       );
+      if (this.shuttingDown) return;
       this.finish(searchId, outcome);
     } catch (err) {
+      if (this.shuttingDown) return;
       this.log.error({ err, searchId }, 'search failed unexpectedly');
       this.db
         .update(searches)

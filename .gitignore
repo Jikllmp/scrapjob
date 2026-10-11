@@ -9,3 +9,5 @@ dist/
 *.db-*
 coverage/
 .vite/
+test-results/
+playwright-report/

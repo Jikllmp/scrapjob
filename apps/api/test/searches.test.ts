@@ -133,10 +133,50 @@ describe('search routes', () => {
   });
 });
 
+describe('cancel and shutdown', () => {
+  function slowApp() {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow = {
+      ...noopAdapter,
+      discoverCompanies: async function* () {
+        await gate;
+      },
+    };
+    return { app: testApp({}, [slow]), release };
+  }
+
+  it('cancels with POST …/cancel, and refuses to cancel a finished search instead of deleting it', async () => {
+    const slow = slowApp();
+    built = slow.app;
+    const { searchId } = (await built.app.inject({ method: 'POST', url: '/api/searches', payload: { location: 'Namur', position: 'Dev' } })).json();
+    await new Promise((r) => setTimeout(r, 10));
+    expect((await built.app.inject({ method: 'POST', url: `/api/searches/${searchId}/cancel` })).statusCode).toBe(202);
+    slow.release();
+    await built.ctx.runner.idle();
+    const again = await built.app.inject({ method: 'POST', url: `/api/searches/${searchId}/cancel` });
+    expect(again.statusCode).toBe(409);
+    expect((await built.app.inject({ url: `/api/searches/${searchId}` })).json().status).toBe('cancelled');
+  });
+
+  it('leaves a running search running on shutdown, so the next start resumes it', async () => {
+    const slow = slowApp();
+    built = slow.app;
+    const { searchId } = (await built.app.inject({ method: 'POST', url: '/api/searches', payload: { location: 'Namur', position: 'Dev' } })).json();
+    await new Promise((r) => setTimeout(r, 10));
+    const closing = built.ctx.runner.shutdown();
+    slow.release();
+    await closing;
+    const row = built.ctx.db.select().from(tables.searches).all().find((s) => s.id === searchId)!;
+    expect(row.status).toBe('running');
+    expect(built.ctx.events.listAfter(searchId).map((e) => e.type)).not.toContain('SEARCH_CANCELLED');
+  });
+});
+
 describe('meta routes', () => {
   it('reports health and the source registry', async () => {
     built = testApp();
-    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.3.0' });
+    expect((await built.app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok', version: '0.4.0' });
     const { items } = (await built.app.inject({ url: '/api/sources' })).json() as { items: Record<string, unknown>[] };
     expect(items.map((s) => [s.id, s.capabilities, s.enabled, s.available, s.unavailableReason])).toEqual([
       ['web-search', ['companies', 'enrich'], false, false, 'BRAVE_API_KEY is not set'],
@@ -148,6 +188,16 @@ describe('meta routes', () => {
       ['noop', ['companies'], true, true, null],
     ]);
     expect(items.every((s) => s.contacts === 0 && s.lastSearch === null)).toBe(true);
+  });
+
+  it('reports what the privacy page needs', async () => {
+    built = testApp({ DATA_RETENTION_DAYS: '90' });
+    expect((await built.app.inject({ url: '/api/privacy' })).json()).toEqual({
+      retentionDays: 90,
+      contacts: 0,
+      oldestCollectedAt: null,
+      blocklistEntries: 0,
+    });
   });
 });
 

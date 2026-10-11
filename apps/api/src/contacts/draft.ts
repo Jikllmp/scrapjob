@@ -40,6 +40,7 @@ export interface StoredContact {
   draft: ContactDraft;
   company: Company | null;
   hasPosting: boolean;
+  score: { score: number; reasons: string[] } | null;
   search: { id: string; location: string; position: string };
 }
 
@@ -76,6 +77,7 @@ export function loadStoredContact(db: Db, contactId: string, taxonomy: Taxonomy)
     },
     company,
     hasPosting,
+    score: contact.relevanceScore === null ? null : { score: contact.relevanceScore, reasons: contact.relevanceReasons },
     search: { id: search.id, location: search.location, position: search.position },
   };
 }

@@ -21,6 +21,7 @@ export class DeepSearchRunner {
   private readonly queue: string[] = [];
   private readonly controllers = new Map<string, AbortController>();
   private active: Promise<void> | null = null;
+  private shuttingDown = false;
 
   constructor(
     private readonly db: Db,
@@ -75,7 +76,9 @@ export class DeepSearchRunner {
     while (this.active) await this.active;
   }
 
+  /** Stops work without recording an outcome: what was running stays `running` and resumes at the next start. */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     this.queue.length = 0;
     for (const c of this.controllers.values()) c.abort();
     await this.idle();
@@ -120,6 +123,7 @@ export class DeepSearchRunner {
           draft: stored.draft,
           company: stored.company,
           hasPosting: stored.hasPosting,
+          previousScore: stored.score,
         },
         {
           adapters: this.registry.enabled(),
@@ -131,6 +135,7 @@ export class DeepSearchRunner {
           signal: controller.signal,
         },
       );
+      if (this.shuttingDown) return;
       this.db
         .update(deepSearches)
         .set({

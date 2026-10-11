@@ -9,6 +9,7 @@ import type { ContactDetailDto, ContactRowDto, SourceDto } from '@scrapjob/schem
 import type { BuiltApp } from '../src/app';
 import { CONTACT_COLUMNS } from '../src/exports/workbook';
 import { importRegistry } from '../src/registry/import';
+import { runPurgeCommand } from '../src/privacy/purge-cli';
 import { fixtureTransport } from './fixtures/transport';
 import { testApp } from './helpers';
 
@@ -112,6 +113,24 @@ describe('a full search on recorded fixtures', () => {
     const { searchId } = await runFixtureSearch();
     const res = (await built.app.inject({ url: `/api/searches/${searchId}/contacts?q=globex` })).json();
     expect(res.items.map((c: ContactRowDto) => c.fullName)).toEqual(['Anne Petit']);
+  });
+});
+
+describe('resume after a restart', () => {
+  it('keeps the contacts already found instead of storing them twice', async () => {
+    const { searchId, contacts } = await runFixtureSearch();
+    built.ctx.db.update(tables.searches).set({ status: 'running' }).where(eq(tables.searches.id, searchId)).run();
+
+    expect(built.ctx.runner.resumeInterrupted()).toBe(1);
+    await built.ctx.runner.idle();
+
+    const after = (await built.app.inject({ url: `/api/searches/${searchId}/contacts` })).json().items as ContactRowDto[];
+    expect(after.map((c) => c.id).sort()).toEqual(contacts.map((c) => c.id).sort());
+    const search = (await built.app.inject({ url: `/api/searches/${searchId}` })).json();
+    expect(search.status).toBe('completed');
+    const types = built.ctx.events.listAfter(searchId).map((e) => e.type);
+    expect(types.filter((t) => t === 'CONTACT_VALIDATED')).toHaveLength(contacts.length);
+    expect(types.filter((t) => t === 'SEARCH_COMPLETED')).toHaveLength(2);
   });
 });
 
@@ -308,6 +327,9 @@ describe('erasure', () => {
     expect(built.ctx.db.select().from(tables.blocklist).all()).toEqual([
       expect.objectContaining({ normalisedName: 'dupont marie', companyDomain: 'acme-software.test' }),
     ]);
+    const log = built.ctx.events.listAfter(searchId);
+    expect(log.some((e) => e.message.includes('Marie Dupont') || JSON.stringify(e.metadata).includes('Marie Dupont'))).toBe(false);
+    expect(log.some((e) => e.message === '[erased]')).toBe(true);
 
     const again = await built.app.inject({
       method: 'POST',
@@ -319,5 +341,83 @@ describe('erasure', () => {
     const names = ((await built.app.inject({ url: `/api/searches/${second}/contacts` })).json().items as ContactRowDto[]).map((c) => c.fullName);
     expect(names).not.toContain('Marie Dupont');
     expect(built.ctx.events.listAfter(second).map((e) => e.message)).toContain('Marie Dupont is on the erasure blocklist');
+  });
+});
+
+describe('retention and purge', () => {
+  async function exportFile(searchId: string) {
+    const { exportId } = (await built.app.inject({ method: 'POST', url: `/api/searches/${searchId}/export`, payload: {} })).json();
+    return built.ctx.db.select().from(tables.exports).where(eq(tables.exports.id, exportId)).get()!.path;
+  }
+
+  function purge(...argv: string[]) {
+    const lines: string[] = [];
+    const code = runPurgeCommand(argv, { db: built.ctx.db, exportDir: built.ctx.exportDir, retentionDays: 180, out: (l) => lines.push(l) });
+    return { code, output: lines.join('\n') };
+  }
+
+  it('deletes contacts collected more than DATA_RETENTION_DAYS ago, with their search spreadsheets', async () => {
+    const { searchId, contacts } = await runFixtureSearch();
+    const file = await exportFile(searchId);
+    const old = contacts.find((c) => c.fullName === 'Paul Martin')!;
+    built.ctx.db.update(tables.contacts).set({ collectedAt: '2020-01-01T00:00:00.000Z' }).where(eq(tables.contacts.id, old.id)).run();
+
+    expect(built.ctx.retention.runOnce()).toBe(1);
+
+    const left = (await built.app.inject({ url: `/api/searches/${searchId}/contacts` })).json().items as ContactRowDto[];
+    expect(left.map((c) => c.id).sort()).toEqual(contacts.filter((c) => c.id !== old.id).map((c) => c.id).sort());
+    expect(built.ctx.db.select().from(tables.evidence).where(eq(tables.evidence.contactId, old.id)).all()).toEqual([]);
+    expect(existsSync(file)).toBe(false);
+    expect(built.ctx.db.select().from(tables.blocklist).all()).toEqual([]);
+    expect(built.ctx.retention.runOnce()).toBe(0);
+    built.ctx.db.update(tables.searchEvents).set({ createdAt: '2020-01-01T00:00:00.000Z' }).run();
+    built.ctx.retention.runOnce();
+    expect(built.ctx.events.listAfter(searchId).every((e) => e.message === '[expired]')).toBe(true);
+  });
+
+  it('purges one search with --search <id>, in both argument forms', async () => {
+    const { searchId, contacts } = await runFixtureSearch();
+    const file = await exportFile(searchId);
+    expect(purge('--', '--search', searchId)).toEqual({
+      code: 0,
+      output: `Deleted search ${searchId}: ${contacts.length} contacts, 1 spreadsheets.`,
+    });
+    expect(existsSync(file)).toBe(false);
+    expect((await built.app.inject({ url: `/api/searches/${searchId}` })).statusCode).toBe(404);
+    expect(built.ctx.db.select().from(tables.contacts).all()).toEqual([]);
+    expect(built.ctx.db.select().from(tables.evidence).all().filter((e) => e.contactId !== null)).toEqual([]);
+    expect(purge(`--search=${searchId}`)).toEqual({ code: 1, output: `No search with id ${searchId}.` });
+  });
+
+  it('empties the database with --all, keeps the blocklist, and the app still runs', async () => {
+    const { searchId, contacts } = await runFixtureSearch();
+    const file = await exportFile(searchId);
+    await built.app.inject({ method: 'DELETE', url: `/api/contacts/${contacts[0]!.id}` });
+
+    const { code, output } = purge('--all');
+    expect(code).toBe(0);
+    expect(output).toMatch(/^Deleted 1 searches, \d+ contacts and \d+ spreadsheets\. Kept the erasure blocklist \(1 entries\)/);
+    expect(existsSync(file)).toBe(false);
+    for (const table of [tables.searches, tables.contacts, tables.evidence, tables.companies, tables.jobOpportunities, tables.searchEvents]) {
+      expect(built.ctx.db.select().from(table).all()).toEqual([]);
+    }
+    expect(built.ctx.db.select().from(tables.blocklist).all()).toHaveLength(1);
+    expect((await built.app.inject({ url: '/api/searches' })).json()).toMatchObject({ total: 0, items: [] });
+
+    const again = await built.app.inject({ method: 'POST', url: '/api/searches', payload: { location: 'Charleroi', position: 'Développeur .NET' } });
+    expect(again.statusCode).toBe(201);
+    await built.ctx.runner.idle();
+    const rows = (await built.app.inject({ url: `/api/searches/${again.json().searchId}/contacts` })).json().items as ContactRowDto[];
+    expect(rows.map((c) => c.fullName)).not.toContain(contacts[0]!.fullName);
+    expect(rows).toHaveLength(contacts.length - 1);
+  });
+
+  it('prints the usage and exits 2 on bad arguments', () => {
+    built = testApp();
+    for (const argv of [[], ['--search'], ['--everything'], ['--all', '--search', 'x']]) {
+      const { code, output } = purge(...argv);
+      expect(code).toBe(2);
+      expect(output).toMatch(/^Usage:/);
+    }
   });
 });

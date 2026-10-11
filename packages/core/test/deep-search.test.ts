@@ -228,4 +228,58 @@ describe('runDeepSearch', () => {
     expect(outcome.status).toBe('failed');
     expect(outcome.message).toContain('no deep-search source is available');
   });
+
+  it('never writes a company field onto the contact', async () => {
+    const site = fakeAdapter({
+      id: 'site',
+      capabilities: ['enrich'],
+      enrich: async () => ({
+        patches: [{ field: 'website', evidence: { field: 'website', value: 'https://other.example', sourceUrl: 'https://acme.be/', snippet: 'see https://other.example', sourceKind: 'page', retrievedAt: T } }],
+      }),
+    });
+    const events = new RecordingSink();
+    const store = new MemoryDeepStore();
+    const outcome = await runDeepSearch({ ...request, draft: lead() }, { ...base, adapters: [site], events, store });
+    expect(outcome.changes).toEqual([]);
+    expect(store.saved).toBeNull();
+    expect(events.ofType('EXTRACTION_REJECTED').map((e) => e.message)).toEqual(['site: "website" is not a contact field']);
+  });
+
+  it('keeps the stored score of a contact whose employer was removed', async () => {
+    const page = 'https://press.example/article';
+    const site = fakeAdapter({
+      id: 'site',
+      capabilities: ['enrich'],
+      enrich: async () => ({
+        patches: [{ field: 'phone', evidence: { field: 'phone', value: '+32 71 00 00 00', sourceUrl: page, snippet: 'tel +32 71 00 00 00', sourceKind: 'page', retrievedAt: T } }],
+      }),
+    });
+    const store = new MemoryDeepStore();
+    const previousScore = { score: 65, reasons: ['+30 tier 1 role (recruiter)'] };
+    await runDeepSearch(
+      { ...request, company: null, previousScore, draft: lead() },
+      { ...base, adapters: [site], events: new RecordingSink(), store },
+    );
+    expect(store.saved?.score).toEqual(previousScore);
+    expect(store.saved?.confidence).not.toBe('UNKNOWN');
+  });
+
+  it('saves nothing when interrupted', async () => {
+    const controller = new AbortController();
+    const site = fakeAdapter({
+      id: 'site',
+      capabilities: ['enrich'],
+      enrich: async () => {
+        controller.abort();
+        return { patches: [{ field: 'full_name', evidence: { ...ev('full_name', 'Paul Martin', 'https://acme.be/equipe'), sourceAdapter: undefined } }] };
+      },
+    });
+    const store = new MemoryDeepStore();
+    const outcome = await runDeepSearch(
+      { ...request, draft: lead() },
+      { ...base, signal: controller.signal, adapters: [site], events: new RecordingSink(), store },
+    );
+    expect(outcome.status).toBe('failed');
+    expect(store.saved).toBeNull();
+  });
 });

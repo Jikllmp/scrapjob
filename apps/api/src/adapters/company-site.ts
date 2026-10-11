@@ -23,7 +23,14 @@ const pageHints: [RegExp, number][] = [
 ];
 
 function rankLink(href: string, text: string): number | null {
-  const haystack = `${decodeURIComponent(new URL(href).pathname)} ${text}`;
+  const path = new URL(href).pathname;
+  let decoded = path;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    // A malformed escape (Latin-1 links, "100%-bio"): match the path as written.
+  }
+  const haystack = `${decoded} ${text}`;
   for (const [pattern, rank] of pageHints) if (pattern.test(haystack)) return rank;
   return null;
 }
@@ -54,7 +61,7 @@ export class CompanySiteAdapter implements SourceAdapter {
 
   async *discoverPeople(ctx: SearchContext, company: Company): AsyncIterable<ContactCandidate> {
     for (const page of await this.employerPages(ctx, company)) {
-      for (const candidate of this.candidates(page, company)) yield candidate;
+      for (const candidate of this.candidates(page, company, ctx.taxonomy.hosts.ats)) yield candidate;
     }
   }
 
@@ -70,7 +77,7 @@ export class CompanySiteAdapter implements SourceAdapter {
     const patches: EvidencePatch[] = [];
     const postings: PostingCandidate[] = [];
     for (const page of await this.employerPages(ctx, company)) {
-      for (const candidate of this.candidates(page, company)) {
+      for (const candidate of this.candidates(page, company, ctx.taxonomy.hosts.ats)) {
         if (normaliseName(candidate.fullName) !== normaliseName(name)) continue;
         for (const evidence of candidate.evidence) patches.push({ field: evidence.field, evidence });
       }
@@ -104,7 +111,7 @@ export class CompanySiteAdapter implements SourceAdapter {
     return pages;
   }
 
-  private *candidates(page: ParsedPage, company: Company): Iterable<ContactCandidate> {
+  private *candidates(page: ParsedPage, company: Company, atsHosts: readonly string[]): Iterable<ContactCandidate> {
     const companySnippet = snippetAround(page.text, company.name) ?? (sameEmployer(page.title, company.name) ? page.title : null);
     const retrievedAt = new Date().toISOString();
     const ev = (field: EvidenceRef['field'], value: string, snippet: string): EvidenceRef => ({
@@ -116,16 +123,24 @@ export class CompanySiteAdapter implements SourceAdapter {
       retrievedAt,
       ...(page.publishedAt ? { publishedAt: page.publishedAt } : {}),
     });
+    // A work address is on the employer's domain, or on the domain of its own page (not an ATS host).
+    // Anything else, a webmail address included, is personal and never collected (spec §2.2).
+    const pageDomain = registrableDomain(page.url);
+    const workDomains = new Set([
+      ...(company.domain ? [registrableDomain(company.domain)] : []),
+      ...(atsHosts.includes(pageDomain) ? [] : [pageDomain]),
+    ]);
     for (const p of page.people) {
+      const email = p.email && p.emailSnippet && workDomains.has(registrableDomain(p.email.split('@')[1] ?? '')) ? p.email : null;
       const evidence: EvidenceRef[] = [ev('full_name', p.fullName, p.nameSnippet)];
       if (p.title && p.titleSnippet) evidence.push(ev('title', p.title, p.titleSnippet));
-      if (p.email && p.emailSnippet) evidence.push(ev('email', p.email, p.emailSnippet));
+      if (email && p.emailSnippet) evidence.push(ev('email', email, p.emailSnippet));
       if (p.profileUrl && p.profileSnippet) evidence.push(ev('profile_url', p.profileUrl, p.profileSnippet));
       if (companySnippet) evidence.push(ev('company', company.name, companySnippet));
       yield {
         fullName: p.fullName,
         ...(p.title ? { title: p.title } : {}),
-        ...(p.email ? { email: p.email } : {}),
+        ...(email ? { email } : {}),
         ...(p.profileUrl ? { profileUrl: p.profileUrl } : {}),
         ...(companySnippet ? { companyName: company.name } : {}),
         postingContact: p.postingContact,

@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
 import { count, desc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { tables } from '@scrapjob/schema';
@@ -13,8 +12,9 @@ import {
 } from '@scrapjob/schema/api';
 import type { AppContext } from '../context';
 import { HttpProblem, parseOr400 } from '../problem';
+import { purgeSearch } from '../privacy/purge';
 
-const { searches, searchEvents, contacts, companies, exports } = tables;
+const { searches, searchEvents, contacts, companies } = tables;
 
 type SearchRow = typeof searches.$inferSelect;
 
@@ -73,6 +73,17 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
     return toDto(findOr404(id));
   });
 
+  /** Stops a queued or running search. Never deletes anything, unlike DELETE. */
+  app.post('/api/searches/:id/cancel', async (request, reply) => {
+    const { id } = parseOr400(SearchIdParams, request.params, 'path');
+    const row = findOr404(id);
+    if (row.status !== 'queued' && row.status !== 'running') {
+      throw new HttpProblem(409, 'Search is not running', `Search ${id} is already ${row.status}.`);
+    }
+    runner.cancel(id);
+    return reply.status(202).send();
+  });
+
   app.delete('/api/searches/:id', async (request, reply) => {
     const { id } = parseOr400(SearchIdParams, request.params, 'path');
     const row = findOr404(id);
@@ -80,10 +91,7 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
       runner.cancel(id);
       return reply.status(202).send();
     }
-    // The spreadsheets go with the search: they hold the same personal data.
-    const files = db.select({ path: exports.path }).from(exports).where(eq(exports.searchId, id)).all();
-    db.delete(searches).where(eq(searches.id, id)).run();
-    for (const f of files) rmSync(f.path, { force: true });
+    purgeSearch(db, id, (path, err) => request.log.warn({ path, err }, 'could not delete a spreadsheet of this search; delete it by hand'));
     return reply.status(204).send();
   });
 }

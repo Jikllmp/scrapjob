@@ -157,4 +157,124 @@ describe('HttpClient', () => {
     expect(seen.map((r) => r.url)).toEqual(['https://api.search.test/q']);
     expect(budget.spent()).toMatchObject({ httpRequests: 0, searchApiCalls: 1 });
   });
+
+  it('opens a circuit breaker after 5 consecutive failures on a host, for this search only', async () => {
+    const { http, seen } = client((url) =>
+      url.endsWith('/robots.txt') ? { status: 404 } : url.startsWith('https://down.test') ? { status: 503 } : { status: 200 },
+      { retryCount: 0 },
+    );
+    const { ctx, events } = searchContext();
+    for (const n of [1, 2, 3, 4, 5]) {
+      expect(await failureOf(http.get(`https://down.test/${n}`, { adapter: 't', ctx }))).toMatchObject({ kind: 'SourceUnavailable' });
+    }
+    expect(events.filter((e) => e.type === 'WARNING')).toHaveLength(1);
+    expect(events.at(-1)?.metadata).toMatchObject({ host: 'down.test', circuitBreaker: 'open' });
+
+    const calls = seen.length;
+    expect(await failureOf(http.get('https://down.test/6', { adapter: 't', ctx }))).toMatchObject({
+      message: 'down.test failed repeatedly; skipped for this search',
+    });
+    expect(seen).toHaveLength(calls);
+    expect((await http.get('https://up.test/1', { adapter: 't', ctx })).status).toBe(200);
+
+    const next = searchContext();
+    await failureOf(http.get('https://down.test/7', { adapter: 't', ctx: next.ctx }));
+    expect(seen.at(-1)?.url).toBe('https://down.test/7');
+  });
+
+  it('resets the failure streak after a success', async () => {
+    let failing = true;
+    const { http } = client((url) => (url.endsWith('/robots.txt') ? { status: 404 } : { status: failing ? 503 : 200 }), { retryCount: 0 });
+    const { ctx, events } = searchContext();
+    for (const n of [1, 2, 3, 4]) await failureOf(http.get(`https://a.test/${n}`, { adapter: 't', ctx }));
+    failing = false;
+    await http.get('https://a.test/ok', { adapter: 't', ctx });
+    failing = true;
+    for (const n of [5, 6, 7, 8]) await failureOf(http.get(`https://a.test/${n}`, { adapter: 't', ctx }));
+    expect(events.filter((e) => e.type === 'WARNING')).toHaveLength(0);
+  });
+
+  it('turns a network error into SourceUnavailable without retrying', async () => {
+    const transport: Transport = async () => {
+      throw new Error('ECONNRESET');
+    };
+    const { http } = client(ok, { transport });
+    expect(await failureOf(http.get('https://a.test/x', { adapter: 't', ctx: searchContext().ctx, robots: false }))).toMatchObject({
+      kind: 'SourceUnavailable',
+      message: 'ECONNRESET',
+    });
+  });
+
+  it('re-reads robots.txt after 24 hours', async () => {
+    const { http, seen, clock } = client(ok);
+    const { ctx } = searchContext();
+    await http.get('https://a.test/1', { adapter: 't', ctx });
+    await clock.sleep(24 * 60 * 60 * 1000);
+    await http.get('https://a.test/2', { adapter: 't', ctx });
+    expect(seen.filter((r) => r.url.endsWith('/robots.txt'))).toHaveLength(2);
+  });
+
+  it('follows a redirect itself and checks robots.txt on the new host', async () => {
+    const { http, seen } = client((url) => {
+      if (url === 'https://a.test/robots.txt') return { status: 404 };
+      if (url === 'https://b.test/robots.txt') return { status: 200, body: 'User-agent: *\nDisallow: /private' };
+      if (url === 'https://a.test/team') return { status: 301, headers: { location: 'https://b.test/private/team' } };
+      if (url === 'https://a.test/about') return { status: 302, headers: { location: '/about-us' } };
+      return { status: 200, body: 'ok' };
+    });
+    const { ctx, events } = searchContext();
+    expect(await failureOf(http.get('https://a.test/team', { adapter: 't', ctx }))).toMatchObject({ kind: 'RobotsDisallowed' });
+    expect(seen.map((r) => r.url)).not.toContain('https://b.test/private/team');
+    expect(events.map((e) => e.type)).toContain('ROBOTS_DISALLOWED');
+    const res = await http.get('https://a.test/about', { adapter: 't', ctx });
+    expect([res.status, res.url]).toEqual([200, 'https://a.test/about-us']);
+  });
+
+  it('never follows a redirect to LinkedIn', async () => {
+    const { http, seen } = client((url) =>
+      url.endsWith('/robots.txt') ? { status: 404 } : { status: 301, headers: { location: 'https://www.linkedin.com/in/marie' } },
+    );
+    expect(await failureOf(http.get('https://short.test/x', { adapter: 't', ctx: searchContext().ctx }))).toMatchObject({ kind: 'RobotsDisallowed' });
+    expect(seen.some((r) => r.url.includes('linkedin.com'))).toBe(false);
+  });
+
+  it('stops after 5 redirects', async () => {
+    let n = 0;
+    const { http } = client((url) => (url.endsWith('/robots.txt') ? { status: 404 } : { status: 302, headers: { location: `/hop${(n += 1)}` } }));
+    expect(await failureOf(http.get('https://a.test/start', { adapter: 't', ctx: searchContext().ctx }))).toMatchObject({
+      message: 'more than 5 redirects',
+    });
+  });
+
+  it('reads no page without a contact URL, but still calls licensed APIs', async () => {
+    const { http, seen } = client(ok, { contactUrl: undefined });
+    expect(await failureOf(http.get('https://a.test/x', { adapter: 't', ctx: searchContext().ctx }))).toMatchObject({ kind: 'AuthRequired' });
+    expect(seen).toHaveLength(0);
+    expect((await http.get('https://api.search.test/q', { adapter: 't', ctx: searchContext().ctx, robots: false })).status).toBe(200);
+  });
+
+  it('caps a long Retry-After at 60 seconds', async () => {
+    const { http, seen, clock } = client((url) =>
+      url.endsWith('/robots.txt') ? { status: 404 } : url.endsWith('/x') ? { status: 429, headers: { 'retry-after': '3600' } } : { status: 200 },
+    );
+    const { ctx } = searchContext();
+    await failureOf(http.get('https://a.test/x', { adapter: 't', ctx }));
+    const before = clock.now();
+    await http.get('https://a.test/y', { adapter: 't', ctx });
+    expect(seen.at(-1)!.at - before).toBe(60_000);
+  });
+
+  it('treats a rate-limited robots.txt as "disallow" for a few minutes, then asks again', async () => {
+    let limited = true;
+    const { http, seen, clock } = client((url) =>
+      url.endsWith('/robots.txt') ? (limited ? { status: 429 } : { status: 404 }) : { status: 200, body: 'ok' },
+    );
+    const { ctx } = searchContext();
+    expect(await failureOf(http.get('https://a.test/1', { adapter: 't', ctx }))).toMatchObject({ kind: 'RobotsDisallowed' });
+    expect(await failureOf(http.get('https://a.test/2', { adapter: 't', ctx }))).toMatchObject({ kind: 'RobotsDisallowed' });
+    expect(seen.filter((r) => r.url.endsWith('/robots.txt'))).toHaveLength(1);
+    limited = false;
+    await clock.sleep(10 * 60 * 1000);
+    expect((await http.get('https://a.test/3', { adapter: 't', ctx })).status).toBe(200);
+  });
 });

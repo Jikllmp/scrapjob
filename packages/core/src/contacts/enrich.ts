@@ -52,7 +52,8 @@ function agrees(field: ContactField, current: string, value: string): boolean {
  * appended; a value is only replaced by one with strictly higher confidence;
  * a title or employer that disagrees is kept as evidence and the field is
  * flagged `contradicted` (which makes it UNKNOWN) instead of picking a winner.
- * The person's name is never changed.
+ * The person's name is never changed, and evidence naming someone else is
+ * dropped: it is about another person, not a correction of this one.
  */
 export function applyPatches(draft: ContactDraft, patches: readonly AttributedEvidence[], ctx: ConfidenceContext): PatchOutcome {
   const next: ContactDraft = {

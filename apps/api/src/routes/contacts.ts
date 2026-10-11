@@ -122,7 +122,9 @@ export function registerContactRoutes(app: FastifyInstance, ctx: AppContext): vo
 
   app.delete('/api/contacts/:id', async (request, reply) => {
     const { id } = parseOr400(ContactIdParams, request.params, 'path');
-    const result = eraseContact(db, id);
+    const result = eraseContact(db, id, undefined, (path, err) =>
+      request.log.warn({ path, err }, 'could not delete a spreadsheet of this search; delete it by hand'),
+    );
     if (!result.erased) throw new HttpProblem(404, 'Contact not found', `No contact with id ${id}.`);
     request.log.info({ contactId: id, exportsDeleted: result.exportsDeleted }, 'contact erased and blocklisted');
     return reply.status(204).send();
